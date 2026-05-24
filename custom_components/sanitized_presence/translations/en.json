@@ -1,0 +1,26 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sanitized Presence Setup",
+        "description": "Configure how often to scan for new MTG075/MTG275 radar devices.",
+        "data": {
+          "poll_interval": "Discovery interval (seconds)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Sanitized Presence is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sanitized Presence Options",
+        "data": {
+          "poll_interval": "Discovery interval (seconds)"
+        }
+      }
+    }
+  }
+}
