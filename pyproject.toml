@@ -1,0 +1,48 @@
+[project]
+name = "ha_sanitized_presence"
+version = "0.1.0"
+description = "Home Assistant integration: sanitized presence binary sensor for MTG075/MTG275 mmWave radars"
+requires-python = ">=3.13"
+authors = [{ name = "AlexMKX" }]
+license = { text = "MIT" }
+
+[tool.black]
+line-length = 100
+target-version = ["py313"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["custom_components/sanitized_presence/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "docker_e2e: end-to-end tests requiring a containerized HA instance",
+]
+
+[tool.coverage.run]
+source = ["custom_components/sanitized_presence"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+
+[tool.pylint.main]
+py-version = "3.13"
+load-plugins = ["pylint.extensions.docparams"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-module-docstring",     # module docstrings live in __init__.py top
+    "too-few-public-methods",
+    "duplicate-code",                # auto_reset.py is intentionally duplicated from door_occupancy
+]
+
+[tool.vulture]
+paths = ["custom_components/sanitized_presence"]
+exclude = ["tests/"]
+min_confidence = 80
