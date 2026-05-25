@@ -60,4 +60,5 @@ class DeadlineSensorEntity(SensorEntity):
             self._attr_native_value = None
         else:
             self._attr_native_value = expiry_dt.isoformat()
-        self.async_write_ha_state()
+        if self.entity_id is not None:
+            self.async_write_ha_state()

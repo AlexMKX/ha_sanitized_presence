@@ -62,6 +62,7 @@ class TestDeadlineSensorEntity:
             + native_value equals dt.isoformat() + write was called once.
         """
         sensor = _make_sensor(device_id="abc")
+        sensor.entity_id = "sensor.radar_1_deadline"
         sensor.async_write_ha_state = MagicMock()
         dt = datetime(2026, 5, 24, 15, 30, 0, tzinfo=timezone.utc)
 
@@ -107,6 +108,7 @@ class TestDeadlineSensorEntity:
         3. Assert: native_value is None; second write_ha_state observed.
         """
         sensor = _make_sensor()
+        sensor.entity_id = "sensor.radar_1_deadline"
         sensor.async_write_ha_state = MagicMock()
         sensor.update(datetime(2026, 5, 24, 15, 30, 0, tzinfo=timezone.utc))
         sensor.async_write_ha_state.reset_mock()

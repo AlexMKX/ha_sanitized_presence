@@ -88,6 +88,7 @@ class SanitizedPresenceManager:
         self._add_binary_entities: AddEntitiesCallback | None = None
         self._add_sensor_entities: AddEntitiesCallback | None = None
         self._remove_listener = None
+        self._discovery_started = False
 
     def _find_target_devices(self) -> list:
         """Return list of radar devices with all required entities resolved."""
@@ -134,15 +135,25 @@ class SanitizedPresenceManager:
     ) -> None:
         """Called by binary_sensor platform setup."""
         self._add_binary_entities = async_add_entities
+        await self._maybe_start_discovery()
+
+    async def async_sensor_platform_ready(self, async_add_entities: AddEntitiesCallback) -> None:
+        """Called by sensor platform setup."""
+        self._add_sensor_entities = async_add_entities
+        await self._maybe_start_discovery()
+
+    async def _maybe_start_discovery(self) -> None:
+        """Run initial discovery only once both platforms are ready."""
+        if self._add_binary_entities is None or self._add_sensor_entities is None:
+            return
+        if self._discovery_started:
+            return
+        self._discovery_started = True
         await self._discover_and_add_sensors()
         poll = self.entry.data.get(CONF_POLL_INTERVAL, DEFAULT_POLL_S)
         self._remove_listener = async_track_time_interval(
             self.hass, self._on_tick, timedelta(seconds=poll)
         )
-
-    async def async_sensor_platform_ready(self, async_add_entities: AddEntitiesCallback) -> None:
-        """Called by sensor platform setup."""
-        self._add_sensor_entities = async_add_entities
 
     async def _on_tick(self, _now) -> None:
         await self._discover_and_add_sensors()
