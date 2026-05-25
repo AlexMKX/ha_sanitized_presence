@@ -21,8 +21,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from custom_components.sanitized_presence.auto_reset import AutoResetBinarySensor
 
 
@@ -35,9 +33,11 @@ class _Probe(AutoResetBinarySensor):
         self.deadline_calls: list = []
 
     def async_write_ha_state(self) -> None:
+        """Record a state write instead of calling HA."""
         self.state_writes += 1
 
     def _notify_deadline(self, expiry_dt) -> None:
+        """Record the deadline notification instead of forwarding to a sensor."""
         self.deadline_calls.append(expiry_dt)
 
 

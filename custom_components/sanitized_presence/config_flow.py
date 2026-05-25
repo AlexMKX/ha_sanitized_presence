@@ -24,7 +24,12 @@ class SanitizedPresenceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def is_matching(self, other_flow: "SanitizedPresenceConfigFlow") -> bool:
+        """Return True — single-instance integration; any duplicate flow matches."""
+        return True
+
     async def async_step_user(self, user_input=None):
+        """Handle the initial user step."""
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
 
@@ -40,6 +45,7 @@ class SanitizedPresenceConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
+        """Return the options flow handler."""
         return SanitizedPresenceOptionsFlow()
 
 
@@ -47,6 +53,7 @@ class SanitizedPresenceOptionsFlow(config_entries.OptionsFlow):
     """Options flow for Sanitized Presence."""
 
     async def async_step_init(self, user_input=None):
+        """Handle the options init step."""
         if user_input is not None:
             new_data = dict(self.config_entry.data)
             new_data[CONF_POLL_INTERVAL] = user_input[CONF_POLL_INTERVAL]

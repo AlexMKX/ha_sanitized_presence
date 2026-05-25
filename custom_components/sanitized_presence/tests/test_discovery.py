@@ -15,6 +15,8 @@ How to run:
 
 from __future__ import annotations
 
+# pylint: disable=protected-access
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -65,9 +67,10 @@ class TestSanitizedPresenceManager:
 
     @pytest.fixture
     def manager(self, hass):
+        """Return a fresh manager bound to a minimal mock hass."""
         return SanitizedPresenceManager(hass, _make_entry())
 
-    def test_matching_model_device_is_returned(self, manager, hass):
+    def test_matching_model_device_is_returned(self, manager):
         """A device whose model_id matches TARGET_MODELS is discovered.
 
         Validates: the primary filter that lets the integration find
@@ -93,7 +96,7 @@ class TestSanitizedPresenceManager:
         assert len(found) == 1
         assert found[0].id == "d1"
 
-    def test_device_missing_required_entity_is_skipped(self, manager, hass):
+    def test_device_missing_required_entity_is_skipped(self, manager):
         """A device without all four required entities is excluded.
 
         Validates: defensive discovery — creating sanitized sensors for
@@ -119,7 +122,7 @@ class TestSanitizedPresenceManager:
 
         assert manager._sensors == {}
 
-    async def test_repeated_discovery_does_not_duplicate_entities(self, manager, hass):
+    async def test_repeated_discovery_does_not_duplicate_entities(self, manager):
         """A second discovery tick does not re-add an already-known device.
 
         Validates: idempotency — discovery runs on a timer, and HA would

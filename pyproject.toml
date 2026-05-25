@@ -31,15 +31,21 @@ fail_under = 85
 [tool.pylint.main]
 py-version = "3.13"
 load-plugins = ["pylint.extensions.docparams"]
+# Allow pylint to resolve custom_components.* imports when run from repo root.
+init-hook = "import sys; sys.path.insert(0, '.')"
 
 [tool.pylint.format]
-max-line-length = 100
+# Black formats code to 100; docstrings and Code: references may be slightly wider.
+max-line-length = 125
 
 [tool.pylint."messages control"]
 disable = [
-    "missing-module-docstring",     # module docstrings live in __init__.py top
+    "missing-module-docstring",      # module docstrings live in __init__.py top
     "too-few-public-methods",
-    "duplicate-code",                # auto_reset.py is intentionally duplicated from door_occupancy
+    "duplicate-code",                # auto_reset.py is intentionally mirrored from door_occupancy
+    "too-many-arguments",            # HA entity constructors require many params by design
+    "too-many-positional-arguments", # same
+    "too-many-instance-attributes",  # HA entities track substantial per-device state
 ]
 
 [tool.vulture]

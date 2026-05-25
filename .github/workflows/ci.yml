@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install dev dependencies
-        run: pip install black pylint vulture homeassistant
+        run: pip install black pylint vulture pytest pytest-asyncio homeassistant
       - name: black --check
         run: black --check custom_components/
       - name: pylint

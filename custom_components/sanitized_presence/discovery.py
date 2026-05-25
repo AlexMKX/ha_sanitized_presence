@@ -102,7 +102,7 @@ class SanitizedPresenceManager:
                 eids = self._resolve_entities(device)
                 if eids is None:
                     continue
-                device._eids = eids
+                device.eids = eids
                 result.append(device)
         return result
 
@@ -143,7 +143,12 @@ class SanitizedPresenceManager:
         await self._maybe_start_discovery()
 
     async def _maybe_start_discovery(self) -> None:
-        """Run initial discovery only once both platforms are ready."""
+        """Run first discovery and start the poll timer once both platforms are registered.
+
+        Called by both platform-ready callbacks; does nothing until both
+        _add_binary_entities and _add_sensor_entities are set, then runs
+        exactly once (guarded by _discovery_started).
+        """
         if self._add_binary_entities is None or self._add_sensor_entities is None:
             return
         if self._discovery_started:
@@ -167,7 +172,7 @@ class SanitizedPresenceManager:
         for device in devices:
             if device.id in self._sensors:
                 continue
-            eids = device._eids
+            eids = device.eids
             binary_sensor = SanitizedPresenceBinarySensor(
                 hass=self.hass,
                 entry=self.entry,
@@ -198,6 +203,7 @@ class SanitizedPresenceManager:
             self._add_sensor_entities(new_sensors, update_before_add=True)
 
     async def async_unload(self) -> None:
+        """Cancel the periodic discovery listener on config entry unload."""
         if self._remove_listener is not None:
             self._remove_listener()
             self._remove_listener = None

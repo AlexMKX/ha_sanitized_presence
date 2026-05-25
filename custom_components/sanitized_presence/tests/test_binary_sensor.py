@@ -15,6 +15,8 @@ How to run:
 
 from __future__ import annotations
 
+# pylint: disable=protected-access
+
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 

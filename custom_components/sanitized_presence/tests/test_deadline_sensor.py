@@ -19,8 +19,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import pytest
-
 from homeassistant.const import EntityCategory
 
 from custom_components.sanitized_presence.sensor import DeadlineSensorEntity

@@ -28,6 +28,7 @@ class TestSanitizedPresenceConfigFlow:
 
     @pytest.fixture
     def flow(self):
+        """Return a SanitizedPresenceConfigFlow with a minimal mock hass."""
         flow = SanitizedPresenceConfigFlow()
         flow.hass = MagicMock()
         flow.hass.config_entries = MagicMock()
@@ -112,6 +113,7 @@ class TestSanitizedPresenceOptionsFlow:
 
     @pytest.fixture
     def flow(self):
+        """Return a SanitizedPresenceOptionsFlow wired to a mock config entry."""
         config_entry = MagicMock()
         config_entry.entry_id = "entry_1"
         config_entry.data = {CONF_POLL_INTERVAL: 30}
@@ -121,7 +123,7 @@ class TestSanitizedPresenceOptionsFlow:
         # returns self.handler, which is a mutable class-level attribute.
         flow.handler = "entry_1"
 
-        def _update_entry(entry, data=None, **kwargs):
+        def _update_entry(entry, data=None, **_kwargs):
             if data is not None:
                 entry.data.update(data)
 
