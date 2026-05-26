@@ -202,9 +202,7 @@ class TestEvaluatePulseDecision:
     def test_occupancy_unknown_or_unavailable_does_not_pulse(self, hass, occ_value):
         """Non-`on` occupancy states (unknown/unavailable/missing) gate off."""
         sensor = _make_sensor(hass)
-        _setup_hass_states(
-            hass, target=1.5, detect=4.5, shield=0.0, delay=30, occupancy=occ_value
-        )
+        _setup_hass_states(hass, target=1.5, detect=4.5, shield=0.0, delay=30, occupancy=occ_value)
 
         with patch.object(sensor, "pulse") as mock_pulse:
             sensor._evaluate("test")
