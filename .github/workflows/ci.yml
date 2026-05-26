@@ -20,7 +20,8 @@ jobs:
       - name: pylint
         run: pylint custom_components/sanitized_presence
       - name: vulture (dead code)
-        run: vulture
+        # other_flow: required by HA ConfigFlow.is_matching override signature
+        run: vulture custom_components/sanitized_presence --ignore-names other_flow
 
   tests:
     runs-on: ubuntu-latest
