@@ -1,8 +1,10 @@
 """Binary sensor entity: SanitizedPresenceBinarySensor.
 
 One per discovered MTG075/MTG275 radar device. Subscribes to the device's
-target_distance state changes and runs a periodic tick to maintain the
-sliding-window deadline.
+target_distance and occupancy state changes and runs a periodic tick to
+maintain the sliding-window deadline. The pulse is gated on the native
+occupancy DP being "on": occupancy confirms presence, it does not replace
+the in-range check.
 """
 
 from __future__ import annotations
