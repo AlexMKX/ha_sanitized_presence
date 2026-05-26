@@ -47,20 +47,27 @@ def _make_sensor(hass, *, target_eid="sensor.radar_target_distance"):
         detection_range_eid="number.radar_detection_range",
         shield_range_eid="number.radar_shield_range",
         departure_delay_eid="number.radar_departure_delay",
+        occupancy_eid="binary_sensor.radar_occupancy",
     )
 
 
-def _setup_hass_states(hass, target, detect, shield, delay):
-    """Wire hass.states.get(...) to return mocked states for the four eids."""
+def _setup_hass_states(hass, target, detect, shield, delay, occupancy="on"):
+    """Wire hass.states.get(...) to return mocked states for the five eids."""
 
     def _state_or_unavailable(value):
         return _make_state(str(value)) if value is not None else _make_state("unavailable")
+
+    def _occ_state(value):
+        if value is None:
+            return _make_state("unavailable")
+        return _make_state(value)
 
     mapping = {
         "sensor.radar_target_distance": _state_or_unavailable(target),
         "number.radar_detection_range": _state_or_unavailable(detect),
         "number.radar_shield_range": _state_or_unavailable(shield),
         "number.radar_departure_delay": _state_or_unavailable(delay),
+        "binary_sensor.radar_occupancy": _occ_state(occupancy),
     }
     hass.states.get.side_effect = mapping.get
 
@@ -181,6 +188,37 @@ class TestEvaluatePulseDecision:
 
         mock_pulse.assert_called_once_with(timeout=expected_timeout)
 
+    def test_occupancy_off_in_range_does_not_pulse(self, hass):
+        """occupancy=off with target in range: gate blocks the pulse."""
+        sensor = _make_sensor(hass)
+        _setup_hass_states(hass, target=1.5, detect=4.5, shield=0.0, delay=30, occupancy="off")
+
+        with patch.object(sensor, "pulse") as mock_pulse:
+            sensor._evaluate("test")
+
+        mock_pulse.assert_not_called()
+
+    @pytest.mark.parametrize("occ_value", ["unknown", "unavailable", None])
+    def test_occupancy_unknown_or_unavailable_does_not_pulse(self, hass, occ_value):
+        """Non-`on` occupancy states (unknown/unavailable/missing) gate off."""
+        sensor = _make_sensor(hass)
+        _setup_hass_states(hass, target=1.5, detect=4.5, shield=0.0, delay=30, occupancy=occ_value)
+
+        with patch.object(sensor, "pulse") as mock_pulse:
+            sensor._evaluate("test")
+
+        mock_pulse.assert_not_called()
+
+    def test_occupancy_on_in_range_pulses(self, hass):
+        """occupancy=on with target in range still pulses (regression guard)."""
+        sensor = _make_sensor(hass)
+        _setup_hass_states(hass, target=1.5, detect=4.5, shield=0.0, delay=30, occupancy="on")
+
+        with patch.object(sensor, "pulse") as mock_pulse:
+            sensor._evaluate("test")
+
+        mock_pulse.assert_called_once_with(timeout=30.0)
+
 
 class TestEvaluateAttributes:
     """extra_state_attributes mirror the most recent _evaluate decision."""
@@ -215,6 +253,18 @@ class TestEvaluateAttributes:
         assert attrs["effective_timeout"] == pytest.approx(30.0)
         assert attrs["target_distance_eid"] == "sensor.radar_target_distance"
 
+    def test_attributes_expose_occupancy_state(self, hass):
+        """extra_state_attributes expose the last observed occupancy state."""
+        sensor = _make_sensor(hass)
+        _setup_hass_states(hass, target=1.5, detect=4.5, shield=0.0, delay=30, occupancy="off")
+
+        with patch.object(sensor, "pulse"):
+            sensor._evaluate("tick")
+
+        attrs = sensor.extra_state_attributes
+        assert attrs["occupancy_eid"] == "binary_sensor.radar_occupancy"
+        assert attrs["occupancy_state"] == "off"
+
 
 class TestTargetEventHandling:
     """state_changed events on target_distance route into _evaluate."""
@@ -224,23 +274,24 @@ class TestTargetEventHandling:
 
         Validates: the integration reacts in real time to the radar's
         measurement updates instead of waiting for the periodic tick.
-        Code: custom_components/sanitized_presence/binary_sensor.py::SanitizedPresenceBinarySensor._handle_target_event
+        Code: custom_components/sanitized_presence/binary_sensor.py::SanitizedPresenceBinarySensor._handle_source_event
         Assertion: _evaluate is called exactly once with reason
             "target_change".
         Method:
         1. Arrange: build an event with numeric new_state ("2.0").
-        2. Act: patch _evaluate, call _handle_target_event(event).
+        2. Act: patch _evaluate, call _handle_source_event(event).
         3. Assert: _evaluate called once with "target_change".
         """
         sensor = _make_sensor(hass)
         _setup_hass_states(hass, target=2.0, detect=4.5, shield=0.0, delay=30)
         event = MagicMock()
         event.data = {
+            "entity_id": "sensor.radar_target_distance",
             "new_state": _make_state("2.0"),
             "old_state": _make_state("1.9"),
         }
         with patch.object(sensor, "_evaluate") as mock_eval:
-            sensor._handle_target_event(event)
+            sensor._handle_source_event(event)
 
         mock_eval.assert_called_once_with("target_change")
 
@@ -251,23 +302,51 @@ class TestTargetEventHandling:
         Validates: the integration does not re-evaluate on signals it
         cannot use; the running deadline (if any) is left to expire on
         its own, matching the documented edge-case behavior.
-        Code: custom_components/sanitized_presence/binary_sensor.py::SanitizedPresenceBinarySensor._handle_target_event
+        Code: custom_components/sanitized_presence/binary_sensor.py::SanitizedPresenceBinarySensor._handle_source_event
         Assertion: _evaluate is never called for either sentinel.
         Method:
         1. Arrange: event with new_state = sentinel.
-        2. Act: patch _evaluate, call _handle_target_event.
+        2. Act: patch _evaluate, call _handle_source_event.
         3. Assert: _evaluate not called.
         """
         sensor = _make_sensor(hass)
         event = MagicMock()
         event.data = {
+            "entity_id": "sensor.radar_target_distance",
             "new_state": _make_state(sentinel),
             "old_state": _make_state("1.5"),
         }
         with patch.object(sensor, "_evaluate") as mock_eval:
-            sensor._handle_target_event(event)
+            sensor._handle_source_event(event)
 
         mock_eval.assert_not_called()
+
+    def test_occupancy_state_change_triggers_evaluate(self, hass):
+        """An occupancy state_changed event invokes _evaluate("occupancy_change").
+
+        Validates: the binary sensor subscribes to occupancy as well as
+        target_distance, so an off->on occupancy transition pulses
+        immediately instead of waiting up to TICK_CEILING_S for the
+        next periodic tick.
+        Code: custom_components/sanitized_presence/binary_sensor.py::SanitizedPresenceBinarySensor._handle_source_event
+        Assertion: _evaluate called once with reason "occupancy_change".
+        Method:
+        1. Arrange: build an event with entity_id pointing to occupancy
+            and new_state="on".
+        2. Act: patch _evaluate, call _handle_source_event(event).
+        3. Assert: _evaluate called once with "occupancy_change".
+        """
+        sensor = _make_sensor(hass)
+        event = MagicMock()
+        event.data = {
+            "entity_id": "binary_sensor.radar_occupancy",
+            "new_state": _make_state("on"),
+            "old_state": _make_state("off"),
+        }
+        with patch.object(sensor, "_evaluate") as mock_eval:
+            sensor._handle_source_event(event)
+
+        mock_eval.assert_called_once_with("occupancy_change")
 
 
 class TestTickScheduling:

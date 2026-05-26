@@ -1,8 +1,10 @@
 """Binary sensor entity: SanitizedPresenceBinarySensor.
 
 One per discovered MTG075/MTG275 radar device. Subscribes to the device's
-target_distance state changes and runs a periodic tick to maintain the
-sliding-window deadline.
+target_distance and occupancy state changes and runs a periodic tick to
+maintain the sliding-window deadline. The pulse is gated on the native
+occupancy DP being "on": occupancy confirms presence, it does not replace
+the in-range check.
 """
 
 from __future__ import annotations
@@ -65,6 +67,7 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
         detection_range_eid: str,
         shield_range_eid: str,
         departure_delay_eid: str,
+        occupancy_eid: str,
     ) -> None:
         super().__init__(hass, reset_timeout=DEFAULT_DELAY_S)
         self._entry = entry
@@ -74,6 +77,7 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
         self._detection_range_eid = detection_range_eid
         self._shield_range_eid = shield_range_eid
         self._departure_delay_eid = departure_delay_eid
+        self._occupancy_eid = occupancy_eid
         self._attr_name = f"{device_name} Sanitized Presence"
         self._attr_unique_id = f"{device_id}_sanitized_presence"
         self._unsub_state: Callable[[], None] | None = None
@@ -84,6 +88,7 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
         self._effective_min: float | None = None
         self._effective_max: float | None = None
         self._effective_timeout: float | None = None
+        self._occupancy_state: str | None = None
 
     def set_deadline_sensor(self, deadline_sensor) -> None:
         """Inject the companion deadline sensor (called by discovery manager)."""
@@ -103,8 +108,8 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
         )
         self._unsub_state = async_track_state_change_event(
             self.hass,
-            [self._target_distance_eid],
-            self._handle_target_event,
+            [self._target_distance_eid, self._occupancy_eid],
+            self._handle_source_event,
         )
         self._schedule_tick()
         self._evaluate("startup")
@@ -120,11 +125,17 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
         await super().async_will_remove_from_hass()
 
     @callback
-    def _handle_target_event(self, event) -> None:
+    def _handle_source_event(self, event) -> None:
+        entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         if new_state is None or new_state.state in _IGNORED_STATES:
+            if entity_id == self._occupancy_eid:
+                self._evaluate("occupancy_change")
             return
-        self._evaluate("target_change")
+        if entity_id == self._occupancy_eid:
+            self._evaluate("occupancy_change")
+        else:
+            self._evaluate("target_change")
 
     @callback
     def _on_tick(self, _now) -> None:
@@ -153,6 +164,17 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
         delay = _read(self._departure_delay_eid)
 
         self._last_eval_reason = reason
+
+        occ_state = self.hass.states.get(self._occupancy_eid)
+        occ_value = occ_state.state if occ_state is not None else None
+        self._occupancy_state = occ_value
+        if occ_value != "on":
+            _LOGGER.debug(
+                "_evaluate(%s): occupancy_off (%s), skip",
+                reason,
+                occ_value,
+            )
+            return
 
         if detect is None or target is None:
             _LOGGER.debug("_evaluate(%s): skip — target=%s detect=%s", reason, target, detect)
@@ -192,6 +214,8 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
             "detection_range_eid": self._detection_range_eid,
             "shield_range_eid": self._shield_range_eid,
             "departure_delay_eid": self._departure_delay_eid,
+            "occupancy_eid": self._occupancy_eid,
+            "occupancy_state": self._occupancy_state,
             "effective_min": self._effective_min,
             "effective_max": self._effective_max,
             "effective_timeout": self._effective_timeout,
