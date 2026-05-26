@@ -96,7 +96,7 @@ class SanitizedPresenceBinarySensor(AutoResetBinarySensor):
 
     def _notify_deadline(self, expiry_dt: datetime | None) -> None:
         if self._deadline_sensor is not None:
-            self._deadline_sensor.update(expiry_dt)
+            self._deadline_sensor.set_expiry(expiry_dt)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

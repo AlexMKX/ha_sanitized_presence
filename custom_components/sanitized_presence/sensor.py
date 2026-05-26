@@ -53,7 +53,7 @@ class DeadlineSensorEntity(SensorEntity):
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers=self._device_identifiers)
 
-    def update(self, expiry_dt: datetime | None) -> None:
+    def set_expiry(self, expiry_dt: datetime | None) -> None:
         """Called by the binary sensor when the deadline changes."""
         if expiry_dt is None:
             self._attr_native_value = None

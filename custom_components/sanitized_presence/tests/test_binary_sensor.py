@@ -412,12 +412,12 @@ class TestDeadlineFanout:
         Validates: the wiring between the binary sensor's sliding-window
         and the user-visible DeadlineSensorEntity on the device card.
         Code: custom_components/sanitized_presence/binary_sensor.py::SanitizedPresenceBinarySensor._notify_deadline
-        Assertion: deadline_sensor.update is called once with the same
+        Assertion: deadline_sensor.set_expiry is called once with the same
             datetime instance.
         Method:
         1. Arrange: attach a MagicMock deadline sensor.
         2. Act: call _notify_deadline(dt).
-        3. Assert: update called once with dt.
+        3. Assert: set_expiry called once with dt.
         """
         sensor = _make_sensor(hass)
         deadline_sensor = MagicMock()
@@ -426,7 +426,7 @@ class TestDeadlineFanout:
 
         sensor._notify_deadline(dt)
 
-        deadline_sensor.update.assert_called_once_with(dt)
+        deadline_sensor.set_expiry.assert_called_once_with(dt)
 
     def test_notify_deadline_without_attached_sensor_is_a_noop(self, hass):
         """Pre-wiring _notify_deadline calls (during construction) do not raise.

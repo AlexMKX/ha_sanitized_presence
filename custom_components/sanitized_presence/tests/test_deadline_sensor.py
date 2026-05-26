@@ -64,7 +64,7 @@ class TestDeadlineSensorEntity:
         sensor.async_write_ha_state = MagicMock()
         dt = datetime(2026, 5, 24, 15, 30, 0, tzinfo=timezone.utc)
 
-        sensor.update(dt)
+        sensor.set_expiry(dt)
 
         # Identity sanity: a rename here would break HA wiring silently.
         assert sensor.unique_id == "abc_sanitized_presence_deadline"
@@ -108,10 +108,10 @@ class TestDeadlineSensorEntity:
         sensor = _make_sensor()
         sensor.entity_id = "sensor.radar_1_deadline"
         sensor.async_write_ha_state = MagicMock()
-        sensor.update(datetime(2026, 5, 24, 15, 30, 0, tzinfo=timezone.utc))
+        sensor.set_expiry(datetime(2026, 5, 24, 15, 30, 0, tzinfo=timezone.utc))
         sensor.async_write_ha_state.reset_mock()
 
-        sensor.update(None)
+        sensor.set_expiry(None)
 
         assert sensor.native_value is None
         sensor.async_write_ha_state.assert_called_once()
