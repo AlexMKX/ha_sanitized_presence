@@ -59,7 +59,7 @@ def _full_entity_map():
         "detection_range": "number.r_detection_range",
         "shield_range": "number.r_shield_range",
         "departure_delay": "number.r_departure_delay",
-        "occupancy": "binary_sensor.r_occupancy",
+        "presence": "binary_sensor.r_presence",  # Z2M suffix is "presence", not "occupancy"
     }
 
 
@@ -198,7 +198,7 @@ class TestSanitizedPresenceManager:
         # Note: _full_entity_map() must include "occupancy" by now;
         # this scenario deletes it explicitly.
         partial = _full_entity_map()
-        del partial["occupancy"]
+        del partial["presence"]
         dev = _make_device("d1", "MTG075-ZB-RL", partial)
         with patch(
             "custom_components.sanitized_presence.discovery.devices_by_model",

@@ -21,7 +21,7 @@ SUFFIX_TARGET_DISTANCE = "target_distance"
 SUFFIX_DETECTION_RANGE = "detection_range"
 SUFFIX_SHIELD_RANGE = "shield_range"
 SUFFIX_DEPARTURE_DELAY = "departure_delay"
-SUFFIX_OCCUPANCY = "occupancy"
+SUFFIX_OCCUPANCY = "presence"  # Z2M exports this DP as "presence" suffix, device_class=occupancy
 
 # Range evaluation
 SHIELD_FLOOR_M = 0.1  # effective minimum even when shield_range=0
