@@ -20,7 +20,7 @@ from .const import (
     DEFAULT_POLL_S,
     SUFFIX_DEPARTURE_DELAY,
     SUFFIX_DETECTION_RANGE,
-    SUFFIX_OCCUPANCY,
+    SUFFIX_PRESENCE,
     SUFFIX_SHIELD_RANGE,
     SUFFIX_TARGET_DISTANCE,
     TARGET_MODELS,
@@ -34,7 +34,7 @@ _REQUIRED_SUFFIXES = (
     SUFFIX_DETECTION_RANGE,
     SUFFIX_SHIELD_RANGE,
     SUFFIX_DEPARTURE_DELAY,
-    SUFFIX_OCCUPANCY,
+    SUFFIX_PRESENCE,
 )
 
 Z2M_UID_SUFFIX = "zigbee2mqtt"
@@ -185,7 +185,7 @@ class SanitizedPresenceManager:
                 detection_range_eid=eids[SUFFIX_DETECTION_RANGE],
                 shield_range_eid=eids[SUFFIX_SHIELD_RANGE],
                 departure_delay_eid=eids[SUFFIX_DEPARTURE_DELAY],
-                occupancy_eid=eids[SUFFIX_OCCUPANCY],
+                presence_eid=eids[SUFFIX_PRESENCE],
             )
             deadline_sensor = DeadlineSensorEntity(
                 hass=self.hass,
