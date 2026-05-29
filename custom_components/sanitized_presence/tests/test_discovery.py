@@ -58,8 +58,8 @@ def _full_entity_map():
         "target_distance": "sensor.r_target_distance",
         "detection_range": "number.r_detection_range",
         "shield_range": "number.r_shield_range",
-        "departure_delay": "number.r_departure_delay",
         "presence": "binary_sensor.r_presence",  # Z2M suffix is "presence", not "occupancy"
+        "sensor": "select.r_sensor",  # operating-mode select driven during recovery
     }
 
 
@@ -123,6 +123,44 @@ class TestSanitizedPresenceManager:
 
         assert manager._sensors == {}
 
+    def test_device_missing_sensor_select_is_skipped(self, manager):
+        """A radar without a 'sensor' select entity is not adopted.
+
+        Validates: recovery is impossible without the select entity, so
+        such a device must be skipped like any other missing-required
+        entity, leaving no sensor pair registered.
+        Code: custom_components/sanitized_presence/discovery.py::SanitizedPresenceManager._resolve_entities
+        Assertion: _resolve_entities returns None when the 'sensor'
+            select entity is missing.
+        Method:
+        1. Arrange: device with all required entities except 'sensor'.
+        2. Act: call _resolve_entities(dev).
+        3. Assert: result is None.
+        """
+        partial = _full_entity_map()
+        del partial["sensor"]
+        dev = _make_device("d1", "MTG075-ZB-RL", partial)
+        assert manager._resolve_entities(dev) is None
+
+    def test_full_entity_map_resolves_including_sensor(self, manager):
+        """A device with every required entity (incl. 'sensor') resolves.
+
+        Validates: the happy path — when the select 'sensor' entity is
+        present alongside the other required DPs, the device is adopted
+        and the resolved map includes the sensor eid.
+        Code: custom_components/sanitized_presence/discovery.py::SanitizedPresenceManager._resolve_entities
+        Assertion: _resolve_entities returns a dict whose 'sensor' key maps
+            to the select entity_id.
+        Method:
+        1. Arrange: device with the full entity map.
+        2. Act: call _resolve_entities(dev).
+        3. Assert: result['sensor'] == 'select.r_sensor'.
+        """
+        dev = _make_device("d1", "MTG075-ZB-RL", _full_entity_map())
+        eids = manager._resolve_entities(dev)
+        assert eids is not None
+        assert eids["sensor"] == "select.r_sensor"
+
     async def test_repeated_discovery_does_not_duplicate_entities(self, manager):
         """A second discovery tick does not re-add an already-known device.
 
@@ -180,23 +218,21 @@ class TestSanitizedPresenceManager:
         fake_unsub.assert_called_once()
         assert manager._remove_listener is None
 
-    def test_device_missing_occupancy_entity_is_skipped(self, manager):
-        """A device without an occupancy entity is excluded from discovery.
+    def test_device_missing_presence_entity_is_skipped(self, manager):
+        """A device without a presence entity is excluded from discovery.
 
-        Validates: occupancy is now a required DP — without it, the
-        sanitized sensor cannot apply its gating rule, so creating it
-        would be misleading. Discovery must skip such devices with a
-        warning, matching the existing policy for other required DPs.
+        Validates: presence is a required DP — without it, the sanitized
+        sensor cannot mirror presence in NORMAL mode, so creating it would
+        be misleading. Discovery must skip such devices with a warning,
+        matching the existing policy for other required DPs.
         Code: custom_components/sanitized_presence/discovery.py::SanitizedPresenceManager._resolve_entities
-        Assertion: _sensors is empty after discovery when occupancy
+        Assertion: _sensors is empty after discovery when the presence
             entity is missing.
         Method:
-        1. Arrange: device with the four legacy entities but no occupancy.
+        1. Arrange: device with all required entities but no presence.
         2. Act: patch devices_by_model; call _find_target_devices.
         3. Assert: _sensors == {} (no pair registered).
         """
-        # Note: _full_entity_map() must include "occupancy" by now;
-        # this scenario deletes it explicitly.
         partial = _full_entity_map()
         del partial["presence"]
         dev = _make_device("d1", "MTG075-ZB-RL", partial)

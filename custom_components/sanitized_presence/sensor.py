@@ -1,9 +1,9 @@
-"""Sensor platform for Sanitized Presence — hosts DeadlineSensorEntity."""
+"""Sensor platform for Sanitized Presence — hosts StatusSensorEntity."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -27,11 +27,11 @@ async def async_setup_entry(
     await manager.async_sensor_platform_ready(async_add_entities)
 
 
-class DeadlineSensorEntity(SensorEntity):
-    """Read-only sensor showing the sanitized_presence deadline expiry time."""
+class StatusSensorEntity(SensorEntity):
+    """Diagnostic sensor exposing the current mode and recovery diagnostics."""
 
     _attr_should_poll = False
-    _attr_icon = "mdi:timer-outline"
+    _attr_icon = "mdi:state-machine"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
@@ -45,19 +45,25 @@ class DeadlineSensorEntity(SensorEntity):
         self.hass = hass
         self._entry = entry
         self._device_identifiers = device_identifiers
+        # Keep the legacy unique_id so the existing registry entity is reused
+        # (the old DeadlineSensorEntity used this suffix); only the role and
+        # friendly name change.
         self._attr_unique_id = f"{device_id}_sanitized_presence_deadline"
-        self._attr_name = f"{device_name} Sanitized Presence Deadline"
+        self._attr_name = f"{device_name} Sanitized Presence Status"
         self._attr_native_value: str | None = None
+        self._diagnostics: dict[str, Any] = {}
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(identifiers=self._device_identifiers)
 
-    def set_expiry(self, expiry_dt: datetime | None) -> None:
-        """Called by the binary sensor when the deadline changes."""
-        if expiry_dt is None:
-            self._attr_native_value = None
-        else:
-            self._attr_native_value = expiry_dt.isoformat()
-        if self.entity_id is not None:
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._diagnostics)
+
+    def set_status(self, mode: str, diagnostics: dict[str, Any]) -> None:
+        """Called by the binary sensor when mode or diagnostics change."""
+        self._attr_native_value = mode
+        self._diagnostics = diagnostics
+        if getattr(self, "entity_id", None) is not None:
             self.async_write_ha_state()

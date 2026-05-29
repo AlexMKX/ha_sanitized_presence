@@ -42,7 +42,7 @@ max-line-length = 125
 disable = [
     "missing-module-docstring",      # module docstrings live in __init__.py top
     "too-few-public-methods",
-    "duplicate-code",                # auto_reset.py is intentionally mirrored from door_occupancy
+    "duplicate-code",                # similar HA entity fixture boilerplate in test_binary_sensor / test_status_sensor
     "too-many-arguments",            # HA entity constructors require many params by design
     "too-many-positional-arguments", # same
     "too-many-instance-attributes",  # HA entities track substantial per-device state
