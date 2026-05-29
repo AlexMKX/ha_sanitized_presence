@@ -1,7 +1,7 @@
 {
   "domain": "sanitized_presence",
   "name": "Sanitized Presence",
-  "version": "2026052601",
+  "version": "2026052901",
   "documentation": "https://github.com/AlexMKX/ha_sanitized_presence",
   "issue_tracker": "https://github.com/AlexMKX/ha_sanitized_presence/issues",
   "requirements": [],
