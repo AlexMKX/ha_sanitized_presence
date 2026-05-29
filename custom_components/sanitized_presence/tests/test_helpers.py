@@ -81,7 +81,7 @@ class TestClamp:
         """_clamp returns inclusive boundary values verbatim.
 
         Validates: callers that depend on lo and hi being reachable
-        (e.g. _evaluate using DELAY_MIN_S=10 directly when delay<10).
+        (boundary values must be returned verbatim, not nudged inward).
         Code: custom_components/sanitized_presence/helpers.py::_clamp
         Assertion: result is exactly lo when below, hi when above, value
             when in-range, and exactly the boundary at the boundary.

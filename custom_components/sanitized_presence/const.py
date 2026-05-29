@@ -26,15 +26,6 @@ SUFFIX_PRESENCE = "presence"  # Z2M DP key; HA device_class is "occupancy"
 # Range evaluation
 SHIELD_FLOOR_M = 0.1  # effective minimum even when shield_range=0
 
-# Departure delay clamp applied to the live radar value
-DELAY_MIN_S = 10
-DELAY_MAX_S = 600
-DEFAULT_DELAY_S = 60  # fallback when entity is unavailable
-
-# Tick interval = departure_delay / 2, clamped to [TICK_FLOOR_S, TICK_CEILING_S]
-TICK_FLOOR_S = 2
-TICK_CEILING_S = 300
-
 # --- Recovery state machine ---
 
 # Enter recovery after presence has been continuously "on" this long.
@@ -81,11 +72,6 @@ __all__ = [
     "SUFFIX_DEPARTURE_DELAY",
     "SUFFIX_PRESENCE",
     "SHIELD_FLOOR_M",
-    "DELAY_MIN_S",
-    "DELAY_MAX_S",
-    "DEFAULT_DELAY_S",
-    "TICK_FLOOR_S",
-    "TICK_CEILING_S",
     "RECOVERY_PRESENCE_ON_SEC",
     "HEALTH_RESET_INTERVAL_SEC",
     "SENSOR_RESET_SEQUENCE",
