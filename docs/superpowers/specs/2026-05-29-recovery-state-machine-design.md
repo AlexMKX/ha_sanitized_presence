@@ -1,7 +1,7 @@
 # Sanitized Presence — Recovery State Machine
 
 Date: 2026-05-29
-Status: Approved (design phase)
+Status: Approved (design phase); revised per GFN-CIS global-rules audit
 
 ## Problem
 
@@ -13,7 +13,7 @@ unreliable: it tends to collapse to a static/zero value, so the
 distance-based gate *hurts* normal operation rather than helping it.
 
 The recovery logic that actually unsticks the firmware already exists as a
-standalone pyscript (`/homeassistant/pyscript/occupancy_reset.py`). We want
+standalone pyscript (`<config>/pyscript/occupancy_reset.py`). We want
 to fold its essential behavior into this integration, drop the parts that
 proved unnecessary, and only fall back to distance heuristics while we are
 actively trying to recover a suspected-stuck device.
@@ -149,37 +149,121 @@ presence, sensor
 | `SENSOR_RESET_SEQUENCE`    | `("off","unoccupied","on")` | select-walk order |
 | `SUFFIX_SENSOR`            | `"sensor"` | select-entity unique_id suffix       |
 
+Pulse-model constants (`DEFAULT_DELAY_S`, `DELAY_MIN_S`, `DELAY_MAX_S`,
+`TICK_FLOOR_S`, `TICK_CEILING_S`) are removed once unreferenced.
+
 ## Component Design
 
-- **`binary_sensor.py`** — rewritten. Holds the two-state machine, presence
-  mirror, distance-mode evaluation, and the per-device timers driving the
-  latch and health triggers. Owns the `select_option` calls for the reset
-  cycle and the safety-rail state (cooldown, rate history, circuit breaker,
-  re-entrancy guard).
-- **`discovery.py`** — add `SUFFIX_SENSOR` to required suffixes; pass the
-  resolved select entity_id into the binary sensor constructor.
-- **`const.py`** — add the constants above; drop now-unused distance pulse
-  constants only if they are no longer referenced after the rewrite.
-- **`auto_reset.py`** — the pulse/deadline `AutoResetBinarySensor` base is
-  no longer the right model (output is now state-driven, not pulse-driven).
-  Evaluate for removal during implementation; remove if fully vestigial.
-- **`sensor.py` (`DeadlineSensorEntity`)** — the companion deadline sensor
-  reflected the pulse deadline. With the new model there is no sliding
-  deadline. Decide during implementation whether to repurpose it (e.g.
-  expose current state / recovery info) or remove it. Default: remove if it
-  no longer carries meaningful information.
+Responsibilities are split to keep each unit single-purpose and
+independently testable (SoC/SRP). The entity stays thin; the recovery
+orchestration and safety rails live in a dedicated collaborator.
 
-## Reset Cycle Concurrency
+- **`binary_sensor.py`** (`SanitizedPresenceBinarySensor`) — thin HA entity.
+  Owns: the two-state output (presence mirror in NORMAL, `in_range` in
+  RECOVERY), subscribing to source state changes, the per-device latch/
+  health timers that decide *when* to request recovery, and writing HA
+  state. It delegates the *how* of recovery to `RecoveryController`. It does
+  not contain reset-cycle, cooldown, rate-limit, or circuit-breaker logic.
+- **`recovery.py`** (new — `RecoveryController`) — owns the reset mechanics
+  and all safety rails as one coherent, independently-testable unit:
+  - drives the select-entity through `SENSOR_RESET_SEQUENCE`
+    (`select_option` + async sleeps);
+  - re-entrancy guard, cooldown, rate-limit/circuit-breaker, off-fallback;
+  - exposes a small interface: `request_reset(reason) -> bool` (returns
+    whether a cycle started or was blocked), `is_resetting`, and a
+    diagnostics snapshot (last reset ts, cooldown left, rate-window count,
+    circuit-breaker block left). The entity reads the snapshot for the
+    status sensor and the "ignore presence echoes while resetting" gate.
+
+  This extraction is justified under `code.md` (the safety-rail state is a
+  coherent boundary and enables clean test isolation), not a gratuitous
+  helper.
+- **`discovery.py`** — add `SUFFIX_SENSOR` to required suffixes; resolve the
+  select entity_id; construct a `RecoveryController` per device and inject
+  it (plus the select entity_id) into the binary sensor.
+- **`const.py`** — add the constants above; remove distance pulse constants
+  (`DEFAULT_DELAY_S`, `DELAY_MIN_S`, `DELAY_MAX_S`, `TICK_FLOOR_S`,
+  `TICK_CEILING_S`) once the rewrite no longer references them.
+- **`sensor.py`** — repurpose `DeadlineSensorEntity` into
+  **`StatusSensorEntity`** (diagnostic). `native_value` = current mode
+  (`normal` / `recovery`). `extra_state_attributes` = trigger reason for the
+  current/last recovery, last reset timestamp, cooldown-left, rate-window
+  count, and circuit-breaker block-left, sourced from the controller's
+  diagnostics snapshot. The old `set_expiry()` deadline API is removed (no
+  sliding deadline in the new model); replaced by a `set_status(...)` update
+  hook. Keep the `unique_id` migration in mind: changing the suffix from
+  `_sanitized_presence_deadline` would orphan the old entity — keep the
+  existing `unique_id` or provide a registry migration. (Decide during
+  implementation; default: keep the existing `unique_id`, rename only the
+  friendly name/icon.)
+
+### Dead-code removal (requires explicit approval)
+
+- **`auto_reset.py`** (`AutoResetBinarySensor`) — the pulse/deadline base is
+  vestigial in the state-driven model (no `pulse()`/sliding window). It is a
+  **removal candidate**, but per `code.md` dead code must not be deleted
+  without explicit user approval. The implementation plan must include an
+  explicit confirmation step (show that nothing references it) **before**
+  deleting it.
+
+## Reset Cycle Concurrency & Error Handling
 
 `select.select_option` is async and the cycle includes long sleeps
-(30 s + debounces). The cycle must run without blocking the event loop and
-must be cancellable on entity removal. Use `async` helpers
-(`asyncio.sleep` / HA-native scheduling) and track the running task so it
-can be cancelled in `async_will_remove_from_hass`.
+(30 s + debounces). Requirements:
+
+- Run the cycle as a tracked `asyncio` task (or HA-native scheduling) so it
+  never blocks the event loop; cancel it in
+  `async_will_remove_from_hass` and on integration unload.
+- **Fail-fast, specific exceptions** (no blanket `except`): wrap each
+  `select_option` call and catch the specific HA/service exceptions
+  (e.g. `HomeAssistantError`, `ServiceNotFound`, `vol.Invalid` for a
+  rejected option). On failure: log with context (`device_id`, phase,
+  option, exception) at `warning`/`error`, abort the remaining phases, and
+  ensure the select is left in a safe state — never parked in `off`
+  (the off-fallback is the last-resort net, not the primary handler).
+- `asyncio.CancelledError` must propagate (do not swallow) so removal/unload
+  cancels cleanly.
+- The "ignore presence echoes" gate is keyed on `RecoveryController.is_resetting`
+  and must be cleared in a `finally` block so a failed cycle does not leave
+  the gate stuck closed.
+
+## Fallback Logging & Scope (agreed upfront)
+
+Two fallbacks exist by explicit design decision; both must log when they
+act:
+
+- **Distance-mode** (RECOVERY output) is a scoped fallback active only while
+  recovering. Entry logs the trigger reason; exit (`RECOVERY -> NORMAL`) logs
+  the observed real `presence=off`. Removal condition: it is exited
+  automatically on return to NORMAL — there is no permanent distance path.
+- **Off-fallback** intentionally bypasses cooldown/rate-limit (it is a
+  recovery tool, not a reset). Each activation logs at `info` with device
+  context. This bypass is the agreed scope, documented here so it is not
+  mistaken for a missing safety rail.
 
 ## Testing Strategy
 
-Unit tests (run via `PYTHONPATH=. pytest -q -m "not docker_e2e"`):
+Unit tests (run via `PYTHONPATH=. pytest -q -m "not docker_e2e"`), located
+next to the code under `custom_components/sanitized_presence/tests/` and
+auto-discovered by pytest.
+
+**Test discipline (per `testing.md`):**
+
+- Test *behavior*, not shape: each test must fail if the corresponding logic
+  breaks (a dumb stub must not pass).
+- **Determinism**: the 900 s / 1800 s timers and `async_call_later` /
+  `async_track_time_interval` schedules MUST be driven by virtual time
+  (`freezegun` / `async_fire_time_changed`), never real wall-clock waits.
+  Reset-cycle sleeps are mocked.
+- **Avoid brittle assertions**: exact `select_option` call-order assertions
+  are permitted **only** because `SENSOR_RESET_SEQUENCE` order *is the
+  firmware-recovery contract*; do not assert incidental timing beyond the
+  documented phase delays.
+- Each test carries the mandated structured docstring (Validates / Code /
+  Assertion / Method); regression-style cases (interrupted cycle /
+  off-fallback, device stays latched) use the regression template.
+
+**Scenarios:**
 
 - NORMAL mirrors presence on/off exactly.
 - Latch trigger: presence=on held past `RECOVERY_PRESENCE_ON_SEC` enters
@@ -193,7 +277,12 @@ Unit tests (run via `PYTHONPATH=. pytest -q -m "not docker_e2e"`):
 - Real `presence=off` after cycle completion returns to NORMAL.
 - Cooldown blocks back-to-back resets.
 - Rate limit trips the circuit breaker after `RESET_RATE_LIMIT` resets.
+- Reset-cycle error handling: a failing `select_option` aborts remaining
+  phases, logs context, clears the `is_resetting` gate, and never leaves the
+  select in `off`.
 - Off-fallback flips a select stuck in `off` back to `on`.
+- `StatusSensorEntity` reports the current mode and the controller
+  diagnostics (cooldown/rate-window/circuit-breaker) accurately.
 - Discovery skips devices missing the `sensor` select entity.
 
 ## Deployment & Release
@@ -201,10 +290,11 @@ Unit tests (run via `PYTHONPATH=. pytest -q -m "not docker_e2e"`):
 - Bump `manifest.json` version (HACS pulls from releases; without a bump
   the change is reverted). Release auto-triggers on `manifest.json` change
   pushed to `main`.
-- Deploy to `root@hassio.h.xxl.cx`:
-  `/homeassistant/custom_components/sanitized_presence/`.
+- Deploy to the target HA host's
+  `<config>/custom_components/sanitized_presence/` (deployment host/path are
+  environment-local and kept out of this committed doc).
 - After the integration is verified on the live fleet, **delete**
-  `/homeassistant/pyscript/occupancy_reset.py` so the two do not both drive
+  `<config>/pyscript/occupancy_reset.py` so the two do not both drive
   the select entity.
 
 ## Migration / Coexistence Risk
