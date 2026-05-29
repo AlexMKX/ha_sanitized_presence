@@ -31,9 +31,8 @@ fail_under = 85
 [tool.pylint.main]
 py-version = "3.13"
 load-plugins = ["pylint.extensions.docparams"]
-# Allow pylint to resolve custom_components.* imports when run from repo root,
-# and find homeassistant/voluptuous/pytest from the brew site-packages path.
-init-hook = "import sys; sys.path.insert(0, '.'); sys.path.insert(0, '/home/linuxbrew/.linuxbrew/lib/python3.14/site-packages')"
+# Allow pylint to resolve custom_components.* imports when run from repo root.
+init-hook = "import sys; sys.path.insert(0, '.')"
 
 [tool.pylint.format]
 # Black formats code to 100; docstrings and Code: references may be slightly wider.
