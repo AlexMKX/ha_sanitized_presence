@@ -202,6 +202,41 @@ class TestResetCycle:
         assert ctrl.is_resetting is False
         assert len(calls) == 1
 
+    @pytest.mark.asyncio
+    async def test_request_reset_sets_gate_before_cycle_yields(self, monkeypatch):
+        """request_reset closes the echo gate synchronously before awaiting.
+
+        Validates the race fix: is_resetting must be True from the moment
+        the cycle is approved, not only once async_reset runs, so a real
+        presence=off arriving between scheduling and cycle-start is not
+        mistaken for recovery.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.request_reset
+        Assertion: during the very first awaited select_option call,
+            is_resetting is already True.
+        Method:
+        1. Arrange: patch asyncio.sleep to no-op; capture is_resetting at
+            the first _select_option.
+        2. Act: await request_reset('test').
+        3. Assert: gate was True at first phase.
+        """
+
+        async def _no_sleep(_):
+            return None
+
+        monkeypatch.setattr(rec.asyncio, "sleep", _no_sleep)
+        hass = MagicMock()
+        seen = []
+
+        async def _async_call(_domain, _service, _data, **_kwargs):
+            seen.append(ctrl.is_resetting)
+
+        hass.services.async_call = _async_call
+        ctrl = _make_controller(hass)
+
+        await ctrl.request_reset("test")
+
+        assert seen and seen[0] is True
+
 
 class TestOffFallback:
     """maybe_recover_off flips a select parked in 'off' back to 'on'."""

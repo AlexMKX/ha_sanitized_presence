@@ -218,23 +218,21 @@ class TestSanitizedPresenceManager:
         fake_unsub.assert_called_once()
         assert manager._remove_listener is None
 
-    def test_device_missing_occupancy_entity_is_skipped(self, manager):
-        """A device without an occupancy entity is excluded from discovery.
+    def test_device_missing_presence_entity_is_skipped(self, manager):
+        """A device without a presence entity is excluded from discovery.
 
-        Validates: occupancy is now a required DP — without it, the
-        sanitized sensor cannot apply its gating rule, so creating it
-        would be misleading. Discovery must skip such devices with a
-        warning, matching the existing policy for other required DPs.
+        Validates: presence is a required DP — without it, the sanitized
+        sensor cannot mirror presence in NORMAL mode, so creating it would
+        be misleading. Discovery must skip such devices with a warning,
+        matching the existing policy for other required DPs.
         Code: custom_components/sanitized_presence/discovery.py::SanitizedPresenceManager._resolve_entities
-        Assertion: _sensors is empty after discovery when occupancy
+        Assertion: _sensors is empty after discovery when the presence
             entity is missing.
         Method:
-        1. Arrange: device with the four legacy entities but no occupancy.
+        1. Arrange: device with all required entities but no presence.
         2. Act: patch devices_by_model; call _find_target_devices.
         3. Assert: _sensors == {} (no pair registered).
         """
-        # Note: _full_entity_map() must include "occupancy" by now;
-        # this scenario deletes it explicitly.
         partial = _full_entity_map()
         del partial["presence"]
         dev = _make_device("d1", "MTG075-ZB-RL", partial)

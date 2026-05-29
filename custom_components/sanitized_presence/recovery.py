@@ -14,6 +14,7 @@ import logging
 import time
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
@@ -99,6 +100,11 @@ class RecoveryController:
                 reason,
             )
             return False
+        # Close the echo-suppression gate synchronously, before any await,
+        # so a real presence=off arriving between scheduling and the cycle
+        # starting cannot be mistaken for recovery (it would otherwise exit
+        # RECOVERY prematurely while is_resetting was still False).
+        self._resetting = True
         await self.async_reset(reason)
         return True
 
@@ -110,6 +116,9 @@ class RecoveryController:
         service errors abort the cycle (the off-fallback is the net for a
         select left parked in "off"); CancelledError propagates so removal
         cancels cleanly.
+
+        Sets the re-entrancy / echo-suppression gate so it is safe to call
+        directly; request_reset may have already set it.
         """
         self._resetting = True
         self._last_reason = reason
@@ -133,7 +142,7 @@ class RecoveryController:
             )
         except asyncio.CancelledError:  # pylint: disable=try-except-raise
             raise
-        except HomeAssistantError as err:
+        except (HomeAssistantError, vol.Invalid) as err:
             _LOGGER.error(
                 "sanitized_presence: %s reset cycle aborted (eid=%s): %s",
                 self._device_name,

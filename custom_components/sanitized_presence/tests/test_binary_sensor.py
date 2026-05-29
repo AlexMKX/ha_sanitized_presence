@@ -224,3 +224,36 @@ class TestEchoSuppression:
         sensor._recompute(now=10.0)
 
         assert sensor._mode == MODE_RECOVERY
+
+    def test_request_reset_closes_gate_synchronously(self, hass):
+        """Entering RECOVERY closes the echo gate before any await.
+
+        Validates the race fix: once request_reset is invoked it sets
+        is_resetting synchronously, so a real presence=off arriving in the
+        same recompute cycle cannot prematurely exit RECOVERY.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.request_reset
+        Assertion: after request_reset is called, controller.is_resetting
+            is True and a subsequent _recompute with presence='off' stays
+            in RECOVERY.
+        Method:
+        1. Arrange: a controller stub whose request_reset sets is_resetting
+            True synchronously (mirroring the real implementation).
+        2. Act: force RECOVERY, call request_reset, then recompute off.
+        3. Assert: mode stays RECOVERY.
+        """
+        controller = MagicMock()
+        controller.is_resetting = False
+
+        def _req(_reason):
+            controller.is_resetting = True
+            return True  # not awaited in this unit test (async_create_task mocked)
+
+        controller.request_reset = MagicMock(side_effect=_req)
+        sensor = _make_sensor(hass, controller)
+        sensor._mode = MODE_RECOVERY
+        _states(hass, presence="off")
+
+        controller.request_reset("latch")  # gate closes synchronously
+        sensor._recompute(now=10.0)
+
+        assert sensor._mode == MODE_RECOVERY

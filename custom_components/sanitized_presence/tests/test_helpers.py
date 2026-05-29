@@ -5,8 +5,8 @@ Covers:
   decision logic. Wrong handling here flips the entire on/off behavior
   silently (e.g. "unavailable" would be parsed as a float and a stale
   radar reading would keep the sensor stuck on).
-- _clamp: protects the integration from out-of-spec radar configuration
-  (e.g. departure_delay=1s would make the deadline meaningless).
+- _clamp: generic bound-restriction helper; boundary values must be
+  returned verbatim so callers can rely on lo/hi being reachable.
 - in_range: the actual presence decision. Strict bounds and the
   shield_floor are what makes target_distance=0 ("no target") never
   trip the sensor.
@@ -65,7 +65,7 @@ class TestToFloat:
 
 
 class TestClamp:
-    """_clamp must restrict departure_delay to safe bounds."""
+    """_clamp must restrict values to safe inclusive bounds."""
 
     @pytest.mark.parametrize(
         ("value", "lo", "hi", "expected"),

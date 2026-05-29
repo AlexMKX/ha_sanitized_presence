@@ -20,7 +20,6 @@ TARGET_MODELS = ("MTG075-ZB-RL", "MTG275-ZB-RL")
 SUFFIX_TARGET_DISTANCE = "target_distance"
 SUFFIX_DETECTION_RANGE = "detection_range"
 SUFFIX_SHIELD_RANGE = "shield_range"
-SUFFIX_DEPARTURE_DELAY = "departure_delay"
 SUFFIX_PRESENCE = "presence"  # Z2M DP key; HA device_class is "occupancy"
 
 # Range evaluation
@@ -69,7 +68,6 @@ __all__ = [
     "SUFFIX_TARGET_DISTANCE",
     "SUFFIX_DETECTION_RANGE",
     "SUFFIX_SHIELD_RANGE",
-    "SUFFIX_DEPARTURE_DELAY",
     "SUFFIX_PRESENCE",
     "SHIELD_FLOOR_M",
     "RECOVERY_PRESENCE_ON_SEC",

@@ -14,6 +14,8 @@ presence "off" observed while no reset cycle is in flight.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -99,6 +101,8 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         self._unsub_state: Callable[[], None] | None = None
         self._unsub_health: Callable[[], None] | None = None
         self._unsub_fallback: Callable[[], None] | None = None
+        self._reset_task: asyncio.Task | None = None
+        self._fallback_task: asyncio.Task | None = None
 
     def set_status_sensor(self, status_sensor) -> None:
         """Inject the companion status sensor (called by discovery manager)."""
@@ -131,6 +135,15 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
             if unsub is not None:
                 unsub()
                 setattr(self, unsub_attr, None)
+        # Cancel any in-flight reset / fallback task so a reload mid-cycle
+        # does not keep driving the select against a stale entity.
+        for task_attr in ("_reset_task", "_fallback_task"):
+            task = getattr(self, task_attr)
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            setattr(self, task_attr, None)
 
     @callback
     def _handle_source_event(self, event) -> None:
@@ -151,7 +164,8 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
 
     @callback
     def _on_fallback_tick(self, _now) -> None:
-        self.hass.async_create_task(self._controller.maybe_recover_off())
+        if self._fallback_task is None or self._fallback_task.done():
+            self._fallback_task = self.hass.async_create_task(self._controller.maybe_recover_off())
 
     def _read(self, eid: str) -> float | None:
         s = self.hass.states.get(eid)
@@ -207,7 +221,8 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         _LOGGER.info(
             "sanitized_presence: %s entering RECOVERY (reason=%s)", self._device_id, reason
         )
-        self.hass.async_create_task(self._controller.request_reset(reason))
+        if self._reset_task is None or self._reset_task.done():
+            self._reset_task = self.hass.async_create_task(self._controller.request_reset(reason))
 
     def _exit_recovery(self, now: float) -> None:
         self._mode = MODE_NORMAL
