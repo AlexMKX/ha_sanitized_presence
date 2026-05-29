@@ -268,3 +268,27 @@ class TestOffFallback:
         await ctrl.maybe_recover_off()
 
         assert calls == []
+
+
+class TestDiagnostics:
+    """diagnostics() reports the safety-rail state the status sensor shows."""
+
+    def test_diagnostics_reports_cooldown_and_counts(self):
+        """After a reset, diagnostics shows cooldown-left and rate count.
+
+        Validates: the status sensor receives accurate, current safety-rail
+        figures (cooldown remaining, resets in the window).
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.diagnostics
+        Assertion: immediately after a reset at t=1000, diagnostics(now=1000)
+            shows cooldown_left==RESET_COOLDOWN_SEC and rate_window_count==1.
+        Method:
+        1. Arrange: controller; record a reset at t=1000.
+        2. Act: diagnostics(now=1000).
+        3. Assert: cooldown_left and rate_window_count as expected.
+        """
+        ctrl = _make_controller()
+        ctrl._record_reset(1000.0)
+        diag = ctrl.diagnostics(now=1000.0)
+        assert diag["cooldown_left"] == RESET_COOLDOWN_SEC
+        assert diag["rate_window_count"] == 1
+        assert diag["resetting"] is False
