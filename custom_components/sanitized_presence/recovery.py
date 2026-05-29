@@ -84,6 +84,73 @@ class RecoveryController:
             return False
         return True
 
+    async def request_reset(self, reason: str) -> bool:
+        """Start a reset cycle if the safety rails allow it.
+
+        Returns True if a cycle started, False if blocked (re-entrant,
+        cooldown, or circuit breaker).
+        """
+        if self._resetting:
+            return False
+        if not self._allow_reset(now=time.time()):
+            _LOGGER.debug(
+                "sanitized_presence: %s reset blocked by rails (reason=%s)",
+                self._device_name,
+                reason,
+            )
+            return False
+        await self.async_reset(reason)
+        return True
+
+    async def async_reset(self, reason: str) -> None:
+        """Walk the select through SENSOR_RESET_SEQUENCE with phase delays.
+
+        The first "off" is held for RADAR_RESTART_DELAY so the firmware
+        de-energizes; remaining phases wait SENSOR_PHASE_DELAY_SEC. Specific
+        service errors abort the cycle (the off-fallback is the net for a
+        select left parked in "off"); CancelledError propagates so removal
+        cancels cleanly.
+        """
+        self._resetting = True
+        self._last_reason = reason
+        try:
+            _LOGGER.info(
+                "sanitized_presence: %s reset cycle start (reason=%s) -> %s",
+                self._device_name,
+                reason,
+                list(SENSOR_RESET_SEQUENCE),
+            )
+            await self._select_option(SENSOR_RESET_SEQUENCE[0])
+            await asyncio.sleep(RADAR_RESTART_DELAY)
+            for option in SENSOR_RESET_SEQUENCE[1:]:
+                await asyncio.sleep(SENSOR_PHASE_DELAY_SEC)
+                await self._select_option(option)
+            self._record_reset(time.time())
+            _LOGGER.info(
+                "sanitized_presence: %s reset cycle done at option=%s",
+                self._device_name,
+                SENSOR_RESET_SEQUENCE[-1],
+            )
+        except asyncio.CancelledError:
+            raise
+        except HomeAssistantError as err:
+            _LOGGER.error(
+                "sanitized_presence: %s reset cycle aborted (eid=%s): %s",
+                self._device_name,
+                self._sensor_eid,
+                err,
+            )
+        finally:
+            self._resetting = False
+
+    async def _select_option(self, option: str) -> None:
+        await self.hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": self._sensor_eid, "option": option},
+            blocking=True,
+        )
+
     def diagnostics(self, now: float | None = None) -> dict[str, Any]:
         """Snapshot of safety-rail state for the status sensor."""
         now = now if now is not None else time.time()
