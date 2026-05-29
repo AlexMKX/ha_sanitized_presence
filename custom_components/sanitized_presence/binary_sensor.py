@@ -142,7 +142,10 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
     @callback
     def _on_health_tick(self, _now) -> None:
         now = time.time()
-        if self._mode == MODE_NORMAL and (now - self._last_reset_anchor) >= HEALTH_RESET_INTERVAL_SEC:
+        if (
+            self._mode == MODE_NORMAL
+            and (now - self._last_reset_anchor) >= HEALTH_RESET_INTERVAL_SEC
+        ):
             self._enter_recovery("health", now)
         self._recompute(now=now)
 
@@ -170,9 +173,10 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
             self._presence_on_since = None
 
         if self._mode == MODE_NORMAL:
-            held = self._presence_on_since is not None and (
-                now - self._presence_on_since
-            ) >= RECOVERY_PRESENCE_ON_SEC
+            held = (
+                self._presence_on_since is not None
+                and (now - self._presence_on_since) >= RECOVERY_PRESENCE_ON_SEC
+            )
             if held:
                 self._enter_recovery("latch", now)
         else:  # RECOVERY
@@ -208,9 +212,7 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
     def _exit_recovery(self, now: float) -> None:
         self._mode = MODE_NORMAL
         self._last_reset_anchor = now
-        _LOGGER.info(
-            "sanitized_presence: %s leaving RECOVERY (real presence=off)", self._device_id
-        )
+        _LOGGER.info("sanitized_presence: %s leaving RECOVERY (real presence=off)", self._device_id)
 
     @property
     def device_info(self) -> DeviceInfo:

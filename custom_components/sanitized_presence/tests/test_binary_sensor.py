@@ -24,6 +24,7 @@ from custom_components.sanitized_presence.binary_sensor import (
     MODE_RECOVERY,
     SanitizedPresenceBinarySensor,
 )
+from custom_components.sanitized_presence.const import RECOVERY_PRESENCE_ON_SEC
 
 
 def _make_state(value: str):
@@ -102,14 +103,10 @@ class TestLatchTrigger:
         2. Act: _recompute at t=RECOVERY_PRESENCE_ON_SEC.
         3. Assert: mode RECOVERY; request_reset called.
         """
-        from custom_components.sanitized_presence.const import RECOVERY_PRESENCE_ON_SEC
-
         controller = MagicMock(is_resetting=False)
-
-        async def _req(_reason):
-            return True
-
-        controller.request_reset = MagicMock(side_effect=_req)
+        # Plain MagicMock (not a coroutine): _enter_recovery schedules it via
+        # hass.async_create_task, so we only need to verify it was called.
+        controller.request_reset = MagicMock(return_value=True)
         sensor = _make_sensor(hass, controller)
         _states(hass, presence="on")
 
@@ -132,8 +129,6 @@ class TestLatchTrigger:
         2. Act: recompute at t=1000 (only 400s continuous).
         3. Assert: mode NORMAL.
         """
-        from custom_components.sanitized_presence.const import RECOVERY_PRESENCE_ON_SEC
-
         assert RECOVERY_PRESENCE_ON_SEC == 900  # guard: math below assumes this
         sensor = _make_sensor(hass)
 

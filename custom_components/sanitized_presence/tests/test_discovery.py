@@ -160,6 +160,7 @@ class TestSanitizedPresenceManager:
         eids = manager._resolve_entities(dev)
         assert eids is not None
         assert eids["sensor"] == "select.r_sensor"
+
     async def test_repeated_discovery_does_not_duplicate_entities(self, manager):
         """A second discovery tick does not re-add an already-known device.
 

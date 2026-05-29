@@ -131,7 +131,7 @@ class RecoveryController:
                 self._device_name,
                 SENSOR_RESET_SEQUENCE[-1],
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # pylint: disable=try-except-raise
             raise
         except HomeAssistantError as err:
             _LOGGER.error(

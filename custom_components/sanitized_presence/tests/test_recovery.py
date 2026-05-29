@@ -17,11 +17,14 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from homeassistant.exceptions import HomeAssistantError
 
+import custom_components.sanitized_presence.recovery as rec
 from custom_components.sanitized_presence.const import (
     RESET_COOLDOWN_SEC,
     RESET_RATE_BLOCK_SEC,
     RESET_RATE_LIMIT,
+    SENSOR_RESET_SEQUENCE,
 )
 from custom_components.sanitized_presence.recovery import RecoveryController
 
@@ -113,8 +116,6 @@ class TestResetCycle:
         2. Act: await async_reset("test").
         3. Assert: call options equal list(SENSOR_RESET_SEQUENCE).
         """
-        import custom_components.sanitized_presence.recovery as rec
-        from custom_components.sanitized_presence.const import SENSOR_RESET_SEQUENCE
 
         async def _no_sleep(_):
             return None
@@ -124,7 +125,7 @@ class TestResetCycle:
         hass = MagicMock()
         calls = []
 
-        async def _async_call(domain, service, data, blocking=False):
+        async def _async_call(domain, service, data, **_kwargs):
             calls.append((domain, service, data["option"], data["entity_id"]))
 
         hass.services.async_call = _async_call
@@ -150,13 +151,11 @@ class TestResetCycle:
         2. Act: await request_reset("test").
         3. Assert: returns False; no service calls.
         """
-        import custom_components.sanitized_presence.recovery as rec
-
         monkeypatch.setattr(rec.time, "time", lambda: 1000.0)
         hass = MagicMock()
         calls = []
 
-        async def _async_call(*args, **kwargs):
+        async def _async_call(*args, **_kwargs):
             calls.append(args)
 
         hass.services.async_call = _async_call
@@ -166,7 +165,7 @@ class TestResetCycle:
         started = await ctrl.request_reset("test")
 
         assert started is False
-        assert calls == []
+        assert not calls
 
     @pytest.mark.asyncio
     async def test_reset_failure_aborts_and_clears_resetting(self, monkeypatch):
@@ -183,8 +182,6 @@ class TestResetCycle:
         2. Act: await async_reset("test").
         3. Assert: is_resetting False; exactly one call attempted.
         """
-        import custom_components.sanitized_presence.recovery as rec
-        from homeassistant.exceptions import HomeAssistantError
 
         async def _no_sleep(_):
             return None
@@ -193,7 +190,7 @@ class TestResetCycle:
         hass = MagicMock()
         calls = []
 
-        async def _async_call(*args, **kwargs):
+        async def _async_call(*args, **_kwargs):
             calls.append(args)
             raise HomeAssistantError("boom")
 
@@ -228,7 +225,7 @@ class TestOffFallback:
         hass.states.get.return_value = state
         calls = []
 
-        async def _async_call(domain, service, data, blocking=False):
+        async def _async_call(_domain, _service, data, **_kwargs):
             calls.append(data["option"])
 
         hass.services.async_call = _async_call
@@ -258,7 +255,7 @@ class TestOffFallback:
         hass.states.get.return_value = state
         calls = []
 
-        async def _async_call(*args, **kwargs):
+        async def _async_call(*args, **_kwargs):
             calls.append(args)
 
         hass.services.async_call = _async_call
@@ -267,7 +264,7 @@ class TestOffFallback:
 
         await ctrl.maybe_recover_off()
 
-        assert calls == []
+        assert not calls
 
 
 class TestDiagnostics:

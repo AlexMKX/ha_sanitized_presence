@@ -32,7 +32,7 @@ class _Probe(AutoResetBinarySensor):
         self.state_writes = 0
         self.deadline_calls: list = []
 
-    def async_write_ha_state(self) -> None:
+    def async_write_ha_state(self) -> None:  # pylint: disable=overridden-final-method
         """Record a state write instead of calling HA."""
         self.state_writes += 1
 
