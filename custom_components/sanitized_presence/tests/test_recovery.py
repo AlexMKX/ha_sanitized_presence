@@ -204,3 +204,67 @@ class TestResetCycle:
 
         assert ctrl.is_resetting is False
         assert len(calls) == 1
+
+
+class TestOffFallback:
+    """maybe_recover_off flips a select parked in 'off' back to 'on'."""
+
+    @pytest.mark.asyncio
+    async def test_off_select_is_restored_to_on(self):
+        """A select reading 'off' (no cycle running) is restored to 'on'.
+
+        Validates: the last-resort guard recovers a cycle interrupted by an
+        integration restart, where the select would otherwise stay 'off'.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_off
+        Assertion: select_option('on') is called once.
+        Method:
+        1. Arrange: hass.states.get(sensor_eid).state == 'off'; not resetting.
+        2. Act: await maybe_recover_off().
+        3. Assert: one select_option call with option 'on'.
+        """
+        hass = MagicMock()
+        state = MagicMock()
+        state.state = "off"
+        hass.states.get.return_value = state
+        calls = []
+
+        async def _async_call(domain, service, data, blocking=False):
+            calls.append(data["option"])
+
+        hass.services.async_call = _async_call
+        ctrl = _make_controller(hass)
+
+        await ctrl.maybe_recover_off()
+
+        assert calls == ["on"]
+
+    @pytest.mark.asyncio
+    async def test_off_fallback_skipped_while_resetting(self):
+        """The fallback does not interfere with an in-flight reset cycle.
+
+        Validates: maybe_recover_off respects the re-entrancy guard so it
+        never collides with the legitimate 'off' phase of a running cycle.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_off
+        Assertion: with is_resetting True, no service call is made even if
+            the select reads 'off'.
+        Method:
+        1. Arrange: select state 'off'; set _resetting True.
+        2. Act: await maybe_recover_off().
+        3. Assert: no service calls.
+        """
+        hass = MagicMock()
+        state = MagicMock()
+        state.state = "off"
+        hass.states.get.return_value = state
+        calls = []
+
+        async def _async_call(*args, **kwargs):
+            calls.append(args)
+
+        hass.services.async_call = _async_call
+        ctrl = _make_controller(hass)
+        ctrl._resetting = True
+
+        await ctrl.maybe_recover_off()
+
+        assert calls == []
