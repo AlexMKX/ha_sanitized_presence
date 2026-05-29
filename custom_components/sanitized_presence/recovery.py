@@ -1,0 +1,102 @@
+"""Recovery orchestration for stuck MTG075/MTG275 radars.
+
+Owns the firmware reset cycle (walking the device's select entity through
+SENSOR_RESET_SEQUENCE) and all safety rails: a per-device re-entrancy
+guard, a post-reset cooldown, and a sliding-window rate limit backed by a
+circuit breaker. The binary sensor decides *when* recovery is needed and
+delegates the *how* to this controller, keeping the entity thin.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from typing import Any
+
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+
+from .const import (
+    RADAR_RESTART_DELAY,
+    RESET_COOLDOWN_SEC,
+    RESET_RATE_BLOCK_SEC,
+    RESET_RATE_LIMIT,
+    RESET_RATE_WINDOW_SEC,
+    SENSOR_PHASE_DELAY_SEC,
+    SENSOR_RESET_SEQUENCE,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class RecoveryController:
+    """Drives the radar reset cycle with cooldown and rate-limit rails."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        device_id: str,
+        device_name: str,
+        sensor_eid: str,
+    ) -> None:
+        self.hass = hass
+        self._device_id = device_id
+        self._device_name = device_name
+        self._sensor_eid = sensor_eid
+        self._resetting = False
+        self._last_reset_ts: float | None = None
+        self._reset_history: list[float] = []
+        self._block_until: float = 0.0
+        self._last_reason: str | None = None
+
+    @property
+    def is_resetting(self) -> bool:
+        """True while a reset cycle is in flight (echo-suppression gate)."""
+        return self._resetting
+
+    def _prune_history(self, now: float) -> list[float]:
+        threshold = now - RESET_RATE_WINDOW_SEC
+        self._reset_history = [t for t in self._reset_history if t >= threshold]
+        return self._reset_history
+
+    def _record_reset(self, now: float) -> None:
+        self._last_reset_ts = now
+        self._prune_history(now)
+        self._reset_history.append(now)
+
+    def _allow_reset(self, now: float) -> bool:
+        if self._block_until and now < self._block_until:
+            return False
+        if self._last_reset_ts is not None and (now - self._last_reset_ts) < RESET_COOLDOWN_SEC:
+            return False
+        history = self._prune_history(now)
+        if len(history) >= RESET_RATE_LIMIT:
+            self._block_until = now + RESET_RATE_BLOCK_SEC
+            _LOGGER.warning(
+                "sanitized_presence: %s circuit-breaker tripped (%d resets/%ds), "
+                "blocking for %ds",
+                self._device_name,
+                len(history),
+                RESET_RATE_WINDOW_SEC,
+                RESET_RATE_BLOCK_SEC,
+            )
+            return False
+        return True
+
+    def diagnostics(self, now: float | None = None) -> dict[str, Any]:
+        """Snapshot of safety-rail state for the status sensor."""
+        now = now if now is not None else time.time()
+        history = self._prune_history(now)
+        cooldown_left = 0
+        if self._last_reset_ts is not None:
+            cooldown_left = max(0, int(RESET_COOLDOWN_SEC - (now - self._last_reset_ts)))
+        block_left = max(0, int(self._block_until - now))
+        return {
+            "resetting": self._resetting,
+            "last_reset_ts": self._last_reset_ts,
+            "last_reason": self._last_reason,
+            "cooldown_left": cooldown_left,
+            "rate_window_count": len(history),
+            "circuit_breaker_left": block_left,
+        }
