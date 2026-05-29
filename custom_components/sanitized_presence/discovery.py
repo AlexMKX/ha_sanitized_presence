@@ -18,14 +18,15 @@ from .binary_sensor import SanitizedPresenceBinarySensor
 from .const import (
     CONF_POLL_INTERVAL,
     DEFAULT_POLL_S,
-    SUFFIX_DEPARTURE_DELAY,
     SUFFIX_DETECTION_RANGE,
     SUFFIX_PRESENCE,
+    SUFFIX_SENSOR,
     SUFFIX_SHIELD_RANGE,
     SUFFIX_TARGET_DISTANCE,
     TARGET_MODELS,
 )
-from .sensor import DeadlineSensorEntity
+from .recovery import RecoveryController
+from .sensor import StatusSensorEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,8 +34,8 @@ _REQUIRED_SUFFIXES = (
     SUFFIX_TARGET_DISTANCE,
     SUFFIX_DETECTION_RANGE,
     SUFFIX_SHIELD_RANGE,
-    SUFFIX_DEPARTURE_DELAY,
     SUFFIX_PRESENCE,
+    SUFFIX_SENSOR,
 )
 
 Z2M_UID_SUFFIX = "zigbee2mqtt"
@@ -85,7 +86,7 @@ class SanitizedPresenceManager:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
         self.entry = entry
-        # device_id → (SanitizedPresenceBinarySensor, DeadlineSensorEntity)
+        # device_id → (SanitizedPresenceBinarySensor, StatusSensorEntity)
         self._sensors: dict[str, tuple] = {}
         self._add_binary_entities: AddEntitiesCallback | None = None
         self._add_sensor_entities: AddEntitiesCallback | None = None
@@ -175,6 +176,12 @@ class SanitizedPresenceManager:
             if device.id in self._sensors:
                 continue
             eids = device.eids
+            controller = RecoveryController(
+                hass=self.hass,
+                device_id=device.id,
+                device_name=device.name,
+                sensor_eid=eids[SUFFIX_SENSOR],
+            )
             binary_sensor = SanitizedPresenceBinarySensor(
                 hass=self.hass,
                 entry=self.entry,
@@ -184,20 +191,20 @@ class SanitizedPresenceManager:
                 target_distance_eid=eids[SUFFIX_TARGET_DISTANCE],
                 detection_range_eid=eids[SUFFIX_DETECTION_RANGE],
                 shield_range_eid=eids[SUFFIX_SHIELD_RANGE],
-                departure_delay_eid=eids[SUFFIX_DEPARTURE_DELAY],
                 presence_eid=eids[SUFFIX_PRESENCE],
+                controller=controller,
             )
-            deadline_sensor = DeadlineSensorEntity(
+            status_sensor = StatusSensorEntity(
                 hass=self.hass,
                 entry=self.entry,
                 device_id=device.id,
                 device_name=device.name,
                 device_identifiers=device.identifiers,
             )
-            binary_sensor.set_deadline_sensor(deadline_sensor)
-            self._sensors[device.id] = (binary_sensor, deadline_sensor)
+            binary_sensor.set_status_sensor(status_sensor)
+            self._sensors[device.id] = (binary_sensor, status_sensor)
             new_binary.append(binary_sensor)
-            new_sensors.append(deadline_sensor)
+            new_sensors.append(status_sensor)
 
         if new_binary:
             _LOGGER.info("Sanitized Presence: adding %d new radar sensor pair(s)", len(new_binary))

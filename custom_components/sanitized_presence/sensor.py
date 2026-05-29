@@ -27,11 +27,6 @@ async def async_setup_entry(
     await manager.async_sensor_platform_ready(async_add_entities)
 
 
-# Backward-compatibility alias — discovery.py still imports this name;
-# it will be rewired to StatusSensorEntity in Task 8.
-DeadlineSensorEntity = None  # type: ignore[assignment]
-
-
 class StatusSensorEntity(SensorEntity):
     """Diagnostic sensor exposing the current mode and recovery diagnostics."""
 
