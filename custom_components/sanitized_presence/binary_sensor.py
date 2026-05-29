@@ -165,7 +165,9 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
     @callback
     def _on_fallback_tick(self, _now) -> None:
         if self._fallback_task is None or self._fallback_task.done():
-            self._fallback_task = self.hass.async_create_task(self._controller.maybe_recover_off())
+            self._fallback_task = self.hass.async_create_task(
+                self._controller.maybe_recover_parked()
+            )
 
     def _read(self, eid: str) -> float | None:
         s = self.hass.states.get(eid)

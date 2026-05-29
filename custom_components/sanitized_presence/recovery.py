@@ -160,24 +160,31 @@ class RecoveryController:
             blocking=True,
         )
 
-    async def maybe_recover_off(self) -> None:
-        """Restore a select parked in 'off' to 'on'.
+    async def maybe_recover_parked(self) -> None:
+        """Restore a select parked in any non-'on' state to 'on'.
 
-        A completed cycle ends in 'on', so a select stuck in 'off' (with no
-        cycle running) means a cycle was interrupted (e.g. integration
-        restart). This bypasses cooldown/rate limits on purpose — it is a
+        A completed cycle ends in 'on', so a select stuck in 'off' or
+        'unoccupied' (with no cycle running) means a cycle was interrupted
+        (e.g. integration restart, dropped phase command on edge-of-mesh
+        radio). This bypasses cooldown/rate limits on purpose — it is a
         recovery tool, not a reset.
+
+        Ignores 'unknown' / 'unavailable' so a temporarily offline device
+        is not whipsawed by spurious 'on' commands.
         """
         if self._resetting:
             return
         state = self.hass.states.get(self._sensor_eid)
-        if state is not None and state.state == "off":
-            _LOGGER.info(
-                "sanitized_presence: %s off-fallback — select parked in 'off', "
-                "restoring to 'on'",
-                self._device_name,
-            )
-            await self._select_option("on")
+        if state is None:
+            return
+        if state.state in ("on", "unknown", "unavailable"):
+            return
+        _LOGGER.info(
+            "sanitized_presence: %s park-fallback — select parked in %r, restoring to 'on'",
+            self._device_name,
+            state.state,
+        )
+        await self._select_option("on")
 
     def diagnostics(self, now: float | None = None) -> dict[str, Any]:
         """Snapshot of safety-rail state for the status sensor."""

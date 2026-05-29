@@ -238,8 +238,8 @@ class TestResetCycle:
         assert seen and seen[0] is True
 
 
-class TestOffFallback:
-    """maybe_recover_off flips a select parked in 'off' back to 'on'."""
+class TestMaybeRecoverParked:
+    """maybe_recover_parked flips a select parked in any non-'on' state back to 'on'."""
 
     @pytest.mark.asyncio
     async def test_off_select_is_restored_to_on(self):
@@ -247,11 +247,11 @@ class TestOffFallback:
 
         Validates: the last-resort guard recovers a cycle interrupted by an
         integration restart, where the select would otherwise stay 'off'.
-        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_off
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_parked
         Assertion: select_option('on') is called once.
         Method:
         1. Arrange: hass.states.get(sensor_eid).state == 'off'; not resetting.
-        2. Act: await maybe_recover_off().
+        2. Act: await maybe_recover_parked().
         3. Assert: one select_option call with option 'on'.
         """
         hass = MagicMock()
@@ -266,22 +266,110 @@ class TestOffFallback:
         hass.services.async_call = _async_call
         ctrl = _make_controller(hass)
 
-        await ctrl.maybe_recover_off()
+        await ctrl.maybe_recover_parked()
 
         assert calls == ["on"]
 
     @pytest.mark.asyncio
-    async def test_off_fallback_skipped_while_resetting(self):
+    async def test_unoccupied_select_is_restored_to_on(self):
+        """A select reading 'unoccupied' (no cycle running) is restored to 'on'.
+
+        Validates: the park-fallback rescues a cycle that ended mid-sequence at
+        'unoccupied' (e.g. an edge-of-mesh device that dropped the final 'on'
+        command), not only the 'off' state.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_parked
+        Assertion: select_option('on') is called once when state is 'unoccupied'.
+        Method:
+        1. Arrange: hass.states.get(sensor_eid).state == 'unoccupied'; not resetting.
+        2. Act: await maybe_recover_parked().
+        3. Assert: one select_option call with option 'on'.
+        """
+        hass = MagicMock()
+        state = MagicMock()
+        state.state = "unoccupied"
+        hass.states.get.return_value = state
+        calls = []
+
+        async def _async_call(_domain, _service, data, **_kwargs):
+            calls.append(data["option"])
+
+        hass.services.async_call = _async_call
+        ctrl = _make_controller(hass)
+
+        await ctrl.maybe_recover_parked()
+
+        assert calls == ["on"]
+
+    @pytest.mark.asyncio
+    async def test_on_select_not_touched(self):
+        """A select already reading 'on' is left alone.
+
+        Validates: the recovery does not needlessly whipsaw a healthy select.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_parked
+        Assertion: when state is 'on', no service call is made.
+        Method:
+        1. Arrange: hass.states.get(sensor_eid).state == 'on'; not resetting.
+        2. Act: await maybe_recover_parked().
+        3. Assert: no service calls.
+        """
+        hass = MagicMock()
+        state = MagicMock()
+        state.state = "on"
+        hass.states.get.return_value = state
+        calls = []
+
+        async def _async_call(*args, **_kwargs):
+            calls.append(args)
+
+        hass.services.async_call = _async_call
+        ctrl = _make_controller(hass)
+
+        await ctrl.maybe_recover_parked()
+
+        assert not calls
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("unavail_state", ["unknown", "unavailable"])
+    async def test_unknown_unavailable_not_touched(self, unavail_state):
+        """A temporarily offline device ('unknown'/'unavailable') is not restored.
+
+        Validates: the recovery guard ignores devices that are offline so
+        a spurious 'on' command is not sent to a device that is not ready.
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_parked
+        Assertion: with state 'unknown' or 'unavailable', no service call is made.
+        Method:
+        1. Arrange: hass.states.get(sensor_eid).state == unavail_state; not resetting.
+        2. Act: await maybe_recover_parked().
+        3. Assert: no service calls.
+        """
+        hass = MagicMock()
+        state = MagicMock()
+        state.state = unavail_state
+        hass.states.get.return_value = state
+        calls = []
+
+        async def _async_call(*args, **_kwargs):
+            calls.append(args)
+
+        hass.services.async_call = _async_call
+        ctrl = _make_controller(hass)
+
+        await ctrl.maybe_recover_parked()
+
+        assert not calls
+
+    @pytest.mark.asyncio
+    async def test_park_fallback_skipped_while_resetting(self):
         """The fallback does not interfere with an in-flight reset cycle.
 
-        Validates: maybe_recover_off respects the re-entrancy guard so it
+        Validates: maybe_recover_parked respects the re-entrancy guard so it
         never collides with the legitimate 'off' phase of a running cycle.
-        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_off
+        Code: custom_components/sanitized_presence/recovery.py::RecoveryController.maybe_recover_parked
         Assertion: with is_resetting True, no service call is made even if
             the select reads 'off'.
         Method:
         1. Arrange: select state 'off'; set _resetting True.
-        2. Act: await maybe_recover_off().
+        2. Act: await maybe_recover_parked().
         3. Assert: no service calls.
         """
         hass = MagicMock()
@@ -297,7 +385,7 @@ class TestOffFallback:
         ctrl = _make_controller(hass)
         ctrl._resetting = True
 
-        await ctrl.maybe_recover_off()
+        await ctrl.maybe_recover_parked()
 
         assert not calls
 
