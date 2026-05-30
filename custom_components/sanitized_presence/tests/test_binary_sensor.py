@@ -22,6 +22,8 @@ import time as _time_mod
 import unittest.mock as _mock
 from unittest.mock import MagicMock
 
+import asyncio
+
 import pytest
 
 from custom_components.sanitized_presence.binary_sensor import (
@@ -29,7 +31,10 @@ from custom_components.sanitized_presence.binary_sensor import (
     MODE_RECOVERY,
     SanitizedPresenceBinarySensor,
 )
-from custom_components.sanitized_presence.const import RECOVERY_PRESENCE_ON_SEC
+from custom_components.sanitized_presence.const import (
+    HEALTH_RESET_INTERVAL_SEC,
+    RECOVERY_PRESENCE_ON_SEC,
+)
 
 
 def _make_state(value: str):
@@ -295,15 +300,43 @@ class TestHealthTick:
         controller.request_reset.assert_called_once_with("health")
         hass.async_create_task.assert_called()
 
-    def test_health_tick_skipped_when_in_recovery(self, hass):
-        """Health tick must not schedule another reset when RECOVERY is active.
+    def test_health_tick_retries_in_recovery_mode(self, hass):
+        """Health tick in RECOVERY schedules request_reset('recovery-retry') when due.
 
-        Validates: no double-stacking of resets — if a latch already put us
-        in RECOVERY, a health tick arriving at the same time is a no-op.
+        Validates: the periodic retry fix — if the firmware never recovered after
+        the initial reset cycle (native presence still stuck on), the health tick
+        must fire a recovery-retry reset so we don't sit in RECOVERY forever.
         Code: binary_sensor.py::SanitizedPresenceBinarySensor._on_health_tick
-        Assertion: with mode == RECOVERY, request_reset is not called.
+        Assertion: with mode == RECOVERY and interval due, request_reset is
+            called once with 'recovery-retry'; mode stays RECOVERY.
         Method:
-        1. Arrange: mode RECOVERY; health due.
+        1. Arrange: mode RECOVERY; _last_reset_anchor far in the past (due).
+        2. Act: _on_health_tick(None).
+        3. Assert: request_reset called once with 'recovery-retry'; mode RECOVERY.
+        """
+        controller = MagicMock(is_resetting=True)
+        controller.request_reset = MagicMock(return_value=True)
+        sensor = _make_sensor(hass, controller)
+        sensor._mode = MODE_RECOVERY
+        _states(hass, presence="on")
+        sensor._last_reset_anchor = _time_mod.time() - HEALTH_RESET_INTERVAL_SEC - 1
+
+        sensor._on_health_tick(None)
+
+        assert sensor._mode == MODE_RECOVERY
+        controller.request_reset.assert_called_once_with("recovery-retry")
+        hass.async_create_task.assert_called()
+
+    def test_health_tick_skipped_in_recovery_when_not_due(self, hass):
+        """Health tick in RECOVERY is a no-op when the interval has not elapsed.
+
+        Validates: the retry is rate-limited to HEALTH_RESET_INTERVAL_SEC cadence;
+        a tick arriving before the interval elapses must not schedule a reset.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._on_health_tick
+        Assertion: with mode == RECOVERY and interval NOT due, request_reset is
+            not called.
+        Method:
+        1. Arrange: mode RECOVERY; _last_reset_anchor 100s ago (not due).
         2. Act: _on_health_tick(None).
         3. Assert: request_reset NOT called; mode unchanged RECOVERY.
         """
@@ -312,12 +345,70 @@ class TestHealthTick:
         sensor = _make_sensor(hass, controller)
         sensor._mode = MODE_RECOVERY
         _states(hass, presence="on")
-        sensor._last_reset_anchor = 0.0
+        sensor._last_reset_anchor = _time_mod.time() - 100
 
         sensor._on_health_tick(None)
 
         assert sensor._mode == MODE_RECOVERY
         controller.request_reset.assert_not_called()
+
+    def test_health_tick_skipped_when_task_in_flight(self, hass):
+        """Health tick is a no-op when a reset task is already in flight.
+
+        Validates: no double-stacking — if a reset coroutine is still running
+        (reset_task not done), we must not schedule another one regardless of
+        mode or interval.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._on_health_tick
+        Assertion: with a pending _reset_task, request_reset is NOT called even
+            if interval is due.
+        Method:
+        1. Arrange: mode RECOVERY; interval due; _reset_task = pending future.
+        2. Act: _on_health_tick(None).
+        3. Assert: request_reset NOT called.
+        """
+        controller = MagicMock(is_resetting=True)
+        controller.request_reset = MagicMock(return_value=True)
+        sensor = _make_sensor(hass, controller)
+        sensor._mode = MODE_RECOVERY
+        _states(hass, presence="on")
+        sensor._last_reset_anchor = _time_mod.time() - HEALTH_RESET_INTERVAL_SEC - 1
+
+        # Simulate an in-flight task (not done)
+        loop = asyncio.new_event_loop()
+        pending_future = loop.create_future()
+        sensor._reset_task = pending_future
+
+        try:
+            sensor._on_health_tick(None)
+            controller.request_reset.assert_not_called()
+        finally:
+            pending_future.cancel()
+            loop.close()
+
+    def test_health_tick_uses_health_reason_in_normal(self, hass):
+        """Health tick in NORMAL schedules request_reset('health'), not 'recovery-retry'.
+
+        Regression guard: the NORMAL-mode behavior must be unchanged after the
+        RECOVERY retry was added; the reason string must stay 'health'.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._on_health_tick
+        Assertion: in NORMAL mode with interval due, request_reset is called
+            with 'health'; mode stays NORMAL.
+        Method:
+        1. Arrange: mode NORMAL; _last_reset_anchor far in the past (due).
+        2. Act: _on_health_tick(None).
+        3. Assert: request_reset called once with 'health'; mode NORMAL.
+        """
+        controller = MagicMock(is_resetting=False)
+        controller.request_reset = MagicMock(return_value=True)
+        sensor = _make_sensor(hass, controller)
+        sensor._mode = MODE_NORMAL
+        _states(hass, presence="off")
+        sensor._last_reset_anchor = _time_mod.time() - HEALTH_RESET_INTERVAL_SEC - 1
+
+        sensor._on_health_tick(None)
+
+        assert sensor._mode == MODE_NORMAL
+        controller.request_reset.assert_called_once_with("health")
 
     def test_normal_mode_output_frozen_during_reset(self, hass):
         """Phantom presence=on during a health reset is suppressed in NORMAL.

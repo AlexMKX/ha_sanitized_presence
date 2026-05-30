@@ -155,20 +155,29 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
     @callback
     def _on_health_tick(self, _now) -> None:
         now = time.time()
-        if (
-            self._mode == MODE_NORMAL
-            and (now - self._last_reset_anchor) >= HEALTH_RESET_INTERVAL_SEC
-            and (self._reset_task is None or self._reset_task.done())
-        ):
-            # Silent firmware-freshness select-walk. Does NOT enter RECOVERY:
-            # the output keeps mirroring native presence. Only a real latch
-            # (presence stuck 'on') changes output semantics.
-            self._last_reset_anchor = now
+        due = (now - self._last_reset_anchor) >= HEALTH_RESET_INTERVAL_SEC and (
+            self._reset_task is None or self._reset_task.done()
+        )
+        if due:
+            if self._mode == MODE_NORMAL:
+                # Silent firmware-freshness select-walk. Does NOT enter RECOVERY:
+                # the output keeps mirroring native presence. Only a real latch
+                # (presence stuck 'on') changes output semantics.
+                self._last_reset_anchor = now
+                reason = "health"
+            else:  # MODE_RECOVERY
+                # The radar firmware did not recover from the previous reset cycle
+                # (native still stuck on). Retry on the same cadence as the health
+                # interval. The controller's rate-limiter (3/30min + 30min block)
+                # caps runaway retries for a permanently broken radar.
+                self._last_reset_anchor = now
+                reason = "recovery-retry"
             _LOGGER.info(
-                "sanitized_presence: %s health select-walk (background)",
+                "sanitized_presence: %s select-walk (background, reason=%s)",
                 self._device_id,
+                reason,
             )
-            self._reset_task = self.hass.async_create_task(self._controller.request_reset("health"))
+            self._reset_task = self.hass.async_create_task(self._controller.request_reset(reason))
         self._recompute(now=now)
 
     @callback
