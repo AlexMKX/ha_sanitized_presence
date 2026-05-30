@@ -177,6 +177,10 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
             self._fallback_task = self.hass.async_create_task(
                 self._controller.maybe_recover_parked()
             )
+        # Also re-evaluate the state machine each fallback tick (60s cadence)
+        # so latch detection on a stuck device that produces no state events
+        # is not bottlenecked at the 30-min health interval.
+        self._recompute(now=time.time())
 
     def _read(self, eid: str) -> float | None:
         s = self.hass.states.get(eid)
@@ -184,29 +188,33 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
 
     @callback
     def _recompute(self, now: float) -> None:
-        """Single decision point: update mode, output, and recovery triggers."""
+        """Single decision point: latch tracking, latch eval, mode transitions, output.
+
+        During a reset cycle (controller.is_resetting=True) the radar emits
+        phantom presence echoes. To suppress them:
+          - _presence_on_since is NOT advanced/reset (frozen tracking)
+          - In NORMAL mode, _attr_is_on is NOT recomputed (frozen output)
+        BUT the latch check still runs against the frozen _presence_on_since
+        so a genuinely stuck native presence is caught at the next tick — the
+        eager task factory in HA means is_resetting becomes True synchronously
+        when request_reset is scheduled, so without this the latch can never
+        fire on a stuck device with no state events.
+        """
         presence_st = self.hass.states.get(self._presence_eid)
         presence = presence_st.state if presence_st is not None else None
         self._presence_state = presence
         presence_on = presence == "on"
+        is_resetting = self._controller.is_resetting
 
-        if self._mode == MODE_NORMAL and self._controller.is_resetting:
-            # A background health select-walk is in flight. The firmware emits
-            # a phantom presence=on during the walk; freeze both latch tracking
-            # and output so the maintenance cycle is invisible to consumers.
-            # _presence_on_since is left unchanged (not advanced by phantom on).
-            self._notify_status()
-            if getattr(self, "entity_id", None) is not None:
-                self.async_write_ha_state()
-            return
+        # Latch tracking — frozen during reset to prevent phantom echo accumulation.
+        if not is_resetting:
+            if presence_on:
+                if self._presence_on_since is None:
+                    self._presence_on_since = now
+            else:
+                self._presence_on_since = None
 
-        # Track continuous presence-on duration for the latch trigger.
-        if presence_on:
-            if self._presence_on_since is None:
-                self._presence_on_since = now
-        else:
-            self._presence_on_since = None
-
+        # Mode transitions — latch check runs even during a reset.
         if self._mode == MODE_NORMAL:
             held = (
                 self._presence_on_since is not None
@@ -214,12 +222,19 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
             )
             if held:
                 self._enter_recovery("latch", now)
-        else:  # RECOVERY
+        else:  # MODE_RECOVERY
             # Exit only on a real 'off' that is not an echo of our own cycle.
-            if (not self._controller.is_resetting) and presence == "off":
+            if (not is_resetting) and presence == "off":
                 self._exit_recovery(now)
 
-        self._attr_is_on = self._compute_output(presence_on)
+        # Output — frozen in NORMAL during reset (phantom echo suppression).
+        if self._mode == MODE_NORMAL:
+            if not is_resetting:
+                self._attr_is_on = presence_on
+            # else: keep previous _attr_is_on (freeze)
+        else:  # MODE_RECOVERY
+            self._attr_is_on = self._compute_output(presence_on)
+
         self._notify_status()
         if getattr(self, "entity_id", None) is not None:
             self.async_write_ha_state()
