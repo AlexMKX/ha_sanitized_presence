@@ -6,6 +6,7 @@ Groups:
 - TestRecoveryOutput: RECOVERY output uses in_range only (presence ignored).
 - TestRecoveryExit: a real presence=off after the cycle returns to NORMAL.
 - TestEchoSuppression: presence transitions during an active cycle are ignored.
+- TestHealthTick: health tick runs a silent background reset without entering RECOVERY.
 
 How to run:
     PYTHONPATH=. pytest custom_components/sanitized_presence/tests/test_binary_sensor.py
@@ -255,5 +256,154 @@ class TestEchoSuppression:
 
         controller.request_reset("latch")  # gate closes synchronously
         sensor._recompute(now=10.0)
+
+        assert sensor._mode == MODE_RECOVERY
+
+
+class TestHealthTick:
+    """Health tick performs a silent background reset, never enters RECOVERY."""
+
+    def test_health_tick_does_not_enter_recovery(self, hass):
+        """Health tick in NORMAL schedules request_reset('health') and stays NORMAL.
+
+        Validates: the decoupling fix — the periodic health reset is a
+        background firmware-freshness walk; it must NOT change mode or output
+        semantics.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._on_health_tick
+        Assertion: after a due health tick, mode == NORMAL and
+            controller.request_reset was called with 'health'.
+        Method:
+        1. Arrange: NORMAL; health due (_last_reset_anchor set in the past).
+        2. Act: _on_health_tick(None).
+        3. Assert: mode NORMAL; hass.async_create_task called; request_reset
+           called with 'health'.
+        """
+        controller = MagicMock(is_resetting=False)
+        controller.request_reset = MagicMock(return_value=True)
+        sensor = _make_sensor(hass, controller)
+        _states(hass, presence="off")
+        # Back-date anchor so health interval is due.
+        sensor._last_reset_anchor = 0.0
+
+        sensor._on_health_tick(None)
+
+        assert sensor._mode == MODE_NORMAL
+        controller.request_reset.assert_called_once_with("health")
+        hass.async_create_task.assert_called()
+
+    def test_health_tick_skipped_when_in_recovery(self, hass):
+        """Health tick must not schedule another reset when RECOVERY is active.
+
+        Validates: no double-stacking of resets — if a latch already put us
+        in RECOVERY, a health tick arriving at the same time is a no-op.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._on_health_tick
+        Assertion: with mode == RECOVERY, request_reset is not called.
+        Method:
+        1. Arrange: mode RECOVERY; health due.
+        2. Act: _on_health_tick(None).
+        3. Assert: request_reset NOT called; mode unchanged RECOVERY.
+        """
+        controller = MagicMock(is_resetting=True)
+        controller.request_reset = MagicMock()
+        sensor = _make_sensor(hass, controller)
+        sensor._mode = MODE_RECOVERY
+        _states(hass, presence="on")
+        sensor._last_reset_anchor = 0.0
+
+        sensor._on_health_tick(None)
+
+        assert sensor._mode == MODE_RECOVERY
+        controller.request_reset.assert_not_called()
+
+    def test_normal_mode_output_frozen_during_reset(self, hass):
+        """Phantom presence=on during a health reset is suppressed in NORMAL.
+
+        Validates: echo suppression for the health path — the firmware emits
+        a spurious presence=on during the select-walk; in NORMAL mode the
+        sanitized output must not flip on due to this phantom.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._recompute
+        Assertion: with is_resetting=True in NORMAL, presence='on' does NOT
+            set _attr_is_on to True.
+        Method:
+        1. Arrange: NORMAL; output False; controller.is_resetting=True.
+        2. Act: _recompute with presence='on'.
+        3. Assert: _attr_is_on remains False.
+        """
+        controller = MagicMock(is_resetting=True)
+        sensor = _make_sensor(hass, controller)
+        sensor._attr_is_on = False
+        _states(hass, presence="on")
+
+        sensor._recompute(now=0.0)
+
+        assert sensor._attr_is_on is False
+        assert sensor._mode == MODE_NORMAL
+
+    def test_normal_mode_mirrors_presence_when_not_resetting(self, hass):
+        """NORMAL mode mirrors presence faithfully when no reset is in flight.
+
+        Regression guard: the echo-suppression freeze must not break normal
+        mirror semantics when is_resetting is False.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._recompute
+        Assertion: presence 'on' -> True; presence 'off' -> False; both with
+            is_resetting=False.
+        Method:
+        1. Arrange: NORMAL; controller.is_resetting=False.
+        2. Act: _recompute with presence 'on' then 'off'.
+        3. Assert: outputs match presence.
+        """
+        controller = MagicMock(is_resetting=False)
+        sensor = _make_sensor(hass, controller)
+
+        _states(hass, presence="on")
+        sensor._recompute(now=0.0)
+        assert sensor._attr_is_on is True
+
+        _states(hass, presence="off")
+        sensor._recompute(now=1.0)
+        assert sensor._attr_is_on is False
+
+    def test_health_reset_does_not_trip_latch(self, hass):
+        """Phantom presence=on during health reset must not accumulate latch time.
+
+        Validates: latch tracking must be frozen while is_resetting is True
+        so the maintenance walk cannot itself trigger RECOVERY entry.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._recompute
+        Assertion: even after > RECOVERY_PRESENCE_ON_SEC of simulated time
+            with is_resetting=True, mode stays NORMAL.
+        Method:
+        1. Arrange: NORMAL; controller.is_resetting=True; presence='on'.
+        2. Act: multiple _recompute calls spanning > RECOVERY_PRESENCE_ON_SEC.
+        3. Assert: mode NORMAL throughout.
+        """
+        controller = MagicMock(is_resetting=True)
+        sensor = _make_sensor(hass, controller)
+        _states(hass, presence="on")
+
+        # Step through time well past the latch threshold.
+        for t in range(0, RECOVERY_PRESENCE_ON_SEC + 60, 60):
+            sensor._recompute(now=float(t))
+            assert sensor._mode == MODE_NORMAL, f"tripped at t={t}"
+
+    def test_latch_still_enters_recovery(self, hass):
+        """Real latch (is_resetting=False) still enters RECOVERY.
+
+        Regression guard: echo-suppression changes must not disable the
+        fundamental stuck-presence detection.
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._recompute
+        Assertion: with is_resetting=False, presence='on' continuously >=
+            RECOVERY_PRESENCE_ON_SEC causes mode RECOVERY.
+        Method:
+        1. Arrange: NORMAL; controller.is_resetting=False; presence='on'.
+        2. Act: recompute at t=0 then t=RECOVERY_PRESENCE_ON_SEC.
+        3. Assert: mode RECOVERY.
+        """
+        controller = MagicMock(is_resetting=False)
+        controller.request_reset = MagicMock(return_value=True)
+        sensor = _make_sensor(hass, controller)
+        _states(hass, presence="on")
+
+        sensor._recompute(now=0.0)
+        sensor._recompute(now=float(RECOVERY_PRESENCE_ON_SEC))
 
         assert sensor._mode == MODE_RECOVERY

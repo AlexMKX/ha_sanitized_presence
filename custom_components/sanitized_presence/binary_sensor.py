@@ -158,8 +158,17 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         if (
             self._mode == MODE_NORMAL
             and (now - self._last_reset_anchor) >= HEALTH_RESET_INTERVAL_SEC
+            and (self._reset_task is None or self._reset_task.done())
         ):
-            self._enter_recovery("health", now)
+            # Silent firmware-freshness select-walk. Does NOT enter RECOVERY:
+            # the output keeps mirroring native presence. Only a real latch
+            # (presence stuck 'on') changes output semantics.
+            self._last_reset_anchor = now
+            _LOGGER.info(
+                "sanitized_presence: %s health select-walk (background)",
+                self._device_id,
+            )
+            self._reset_task = self.hass.async_create_task(self._controller.request_reset("health"))
         self._recompute(now=now)
 
     @callback
@@ -180,6 +189,16 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         presence = presence_st.state if presence_st is not None else None
         self._presence_state = presence
         presence_on = presence == "on"
+
+        if self._mode == MODE_NORMAL and self._controller.is_resetting:
+            # A background health select-walk is in flight. The firmware emits
+            # a phantom presence=on during the walk; freeze both latch tracking
+            # and output so the maintenance cycle is invisible to consumers.
+            # _presence_on_since is left unchanged (not advanced by phantom on).
+            self._notify_status()
+            if getattr(self, "entity_id", None) is not None:
+                self.async_write_ha_state()
+            return
 
         # Track continuous presence-on duration for the latch trigger.
         if presence_on:
