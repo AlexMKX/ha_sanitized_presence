@@ -68,3 +68,47 @@ class HealController:
     def diagnostics(self) -> dict[str, Any]:
         """Snapshot for the status sensor."""
         return {"healing": self._healing, "iteration": self._iteration}
+
+    async def _select_option(self, option: str) -> None:
+        await self.hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": self._sensor_eid, "option": option},
+            blocking=True,
+        )
+
+    async def _wait_select(self, target: str) -> bool:
+        """Poll the select entity until it reports target, up to the timeout.
+
+        Returns True on confirm, False on timeout. Relies on Z2M
+        optimistic=off so the select state reflects the real device echo;
+        with optimistic on it simply confirms instantly (graceful degrade).
+        """
+        deadline = time.monotonic() + HEAL_CMD_TIMEOUT_SEC
+        while time.monotonic() < deadline:
+            st = self.hass.states.get(self._sensor_eid)
+            if st is not None and st.state == target:
+                return True
+            await asyncio.sleep(HEAL_POLL_SEC)
+        return False
+
+    async def _confirmed_toggle(self) -> bool:
+        """Drive SENSOR_RESET_SEQUENCE, waiting for each step to confirm.
+
+        Returns True if every step confirmed; False if any timed out (the
+        cluster write likely did not reach the radar). Even on timeout the
+        remaining steps are still attempted so the radar is left at 'on'.
+        """
+        all_ok = True
+        for option in SENSOR_RESET_SEQUENCE:
+            await self._select_option(option)
+            if not await self._wait_select(option):
+                all_ok = False
+                _LOGGER.warning(
+                    "sanitized_presence: %s select '%s' not confirmed in %ss "
+                    "(cluster write may not have reached the radar)",
+                    self._device_name,
+                    option,
+                    HEAL_CMD_TIMEOUT_SEC,
+                )
+        return all_ok
