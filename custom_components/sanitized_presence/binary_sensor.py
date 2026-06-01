@@ -1,15 +1,17 @@
-"""Binary sensor: SanitizedPresenceBinarySensor (recovery state machine).
+"""Binary sensor: SanitizedPresenceBinarySensor (discrepancy-driven heal).
 
-One per discovered MTG075/MTG275 radar. Two states:
+One per discovered MTG075/MTG275 radar. Output is the native presence DP,
+except while HEALING when it is frozen.
 
-* NORMAL   — output mirrors the native presence DP verbatim.
-* RECOVERY — output is in_range(shield < target < detection) only (the
-             presence DP is untrusted while recovering), and a firmware
-             reset cycle is driven via the injected RecoveryController.
+* NORMAL  — output mirrors native presence verbatim; tracks the discrepancy
+            (presence=on while distance out of range).
+* HEALING — output frozen at the pre-heal value while the HealController
+            runs a confirmed toggle + observe loop.
+* BACKOFF — output mirrors native presence; heal re-entry suppressed until
+            the backoff timer expires.
 
-Entry to RECOVERY: presence continuously "on" for RECOVERY_PRESENCE_ON_SEC,
-or a periodic health interval elapsing since the last reset. Exit: a real
-presence "off" observed while no reset cycle is in flight.
+distance is used only for the discrepancy trigger and the heal stop
+conditions — never as the output value.
 """
 
 from __future__ import annotations
@@ -31,27 +33,28 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 
 from .const import (
+    DISCREPANCY_TRIGGER_SEC,
     DOMAIN,
+    HEAL_BACKOFF_SEC,
+    PARK_FALLBACK_INTERVAL_SEC,
     SHIELD_FLOOR_M,
 )
+from .heal import HealController
 from .helpers import _to_float, in_range
-
-# TODO(task7): Replace with HealController constants when binary_sensor is rewritten.
-HEALTH_RESET_INTERVAL_SEC = 1800
-OFF_FALLBACK_INTERVAL_SEC = 60
-RECOVERY_PRESENCE_ON_SEC = 900
-
-RecoveryController = object  # placeholder until Task 8
 
 _LOGGER = logging.getLogger(__name__)
 
 _IGNORED_STATES = {"unknown", "unavailable"}
 
-MODE_NORMAL = "normal"
-MODE_RECOVERY = "recovery"
+STATE_NORMAL = "normal"
+STATE_HEALING = "healing"
+STATE_BACKOFF = "backoff"
 
 
 async def async_setup_entry(
@@ -65,7 +68,7 @@ async def async_setup_entry(
 
 
 class SanitizedPresenceBinarySensor(BinarySensorEntity):
-    """Presence sensor that mirrors presence in NORMAL, gates on distance in RECOVERY."""
+    """Presence sensor that mirrors presence and heals a stuck radar."""
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
     _attr_icon = "mdi:motion-sensor"
@@ -82,7 +85,7 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         detection_range_eid: str,
         shield_range_eid: str,
         presence_eid: str,
-        controller: RecoveryController,
+        controller: HealController,
     ) -> None:
         self.hass = hass
         self._entry = entry
@@ -93,18 +96,22 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         self._shield_range_eid = shield_range_eid
         self._presence_eid = presence_eid
         self._controller = controller
+        self._controller.bind_observers(
+            presence_on=self._read_presence_on,
+            in_range_now=self._read_in_range,
+        )
         self._attr_name = f"{device_name} Sanitized Presence"
         self._attr_unique_id = f"{device_id}_sanitized_presence"
         self._attr_is_on = False
-        self._mode = MODE_NORMAL
-        self._presence_on_since: float | None = None
-        self._last_reset_anchor: float = time.time()
+        self._state = STATE_NORMAL
+        self._discrepancy_since: float | None = None
+        self._backoff_until: float = 0.0
+        self._last_heal_result: str = "none"
         self._presence_state: str | None = None
         self._status_sensor = None
         self._unsub_state: Callable[[], None] | None = None
-        self._unsub_health: Callable[[], None] | None = None
         self._unsub_fallback: Callable[[], None] | None = None
-        self._reset_task: asyncio.Task | None = None
+        self._heal_task: asyncio.Task | None = None
         self._fallback_task: asyncio.Task | None = None
 
     def set_status_sensor(self, status_sensor) -> None:
@@ -112,8 +119,18 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         self._status_sensor = status_sensor
 
     def _notify_status(self) -> None:
-        if self._status_sensor is not None:
-            self._status_sensor.set_status(self._mode, self._controller.diagnostics())
+        if self._status_sensor is None:
+            return
+        now = time.time()
+        age = 0 if self._discrepancy_since is None else int(now - self._discrepancy_since)
+        backoff_left = max(0, int(self._backoff_until - now))
+        diag = {
+            "discrepancy_age_sec": age,
+            "last_heal_result": self._last_heal_result,
+            "backoff_left_sec": backoff_left,
+            **self._controller.diagnostics(),
+        }
+        self._status_sensor.set_status(self._state, diag)
 
     async def async_added_to_hass(self) -> None:
         dev_reg = device_registry.async_get(self.hass)
@@ -123,30 +140,45 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
             [self._target_distance_eid, self._presence_eid],
             self._handle_source_event,
         )
-        self._unsub_health = async_track_time_interval(
-            self.hass, self._on_health_tick, timedelta(seconds=HEALTH_RESET_INTERVAL_SEC)
-        )
         self._unsub_fallback = async_track_time_interval(
-            self.hass, self._on_fallback_tick, timedelta(seconds=OFF_FALLBACK_INTERVAL_SEC)
+            self.hass, self._on_fallback_tick, timedelta(seconds=PARK_FALLBACK_INTERVAL_SEC)
         )
         self._recompute(now=time.time())
         _LOGGER.info("SanitizedPresenceBinarySensor created for device_id=%s", self._device_id)
 
     async def async_will_remove_from_hass(self) -> None:
-        for unsub_attr in ("_unsub_state", "_unsub_health", "_unsub_fallback"):
+        for unsub_attr in ("_unsub_state", "_unsub_fallback"):
             unsub = getattr(self, unsub_attr)
             if unsub is not None:
                 unsub()
                 setattr(self, unsub_attr, None)
-        # Cancel any in-flight reset / fallback task so a reload mid-cycle
-        # does not keep driving the select against a stale entity.
-        for task_attr in ("_reset_task", "_fallback_task"):
+        for task_attr in ("_heal_task", "_fallback_task"):
             task = getattr(self, task_attr)
             if task is not None and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             setattr(self, task_attr, None)
+
+    # --- readers injected into the controller -------------------------------
+
+    def _read(self, eid: str) -> float | None:
+        s = self.hass.states.get(eid)
+        return _to_float(s.state if s else None)
+
+    def _read_presence_on(self) -> bool:
+        s = self.hass.states.get(self._presence_eid)
+        return s is not None and s.state == "on"
+
+    def _read_in_range(self) -> bool:
+        target = self._read(self._target_distance_eid)
+        detect = self._read(self._detection_range_eid)
+        if target is None or detect is None:
+            return False
+        shield = self._read(self._shield_range_eid) or 0.0
+        return in_range(target, shield, detect, SHIELD_FLOOR_M)
+
+    # --- events / ticks ------------------------------------------------------
 
     @callback
     def _handle_source_event(self, event) -> None:
@@ -156,126 +188,99 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
         self._recompute(now=time.time())
 
     @callback
-    def _on_health_tick(self, _now) -> None:
-        now = time.time()
-        due = (now - self._last_reset_anchor) >= HEALTH_RESET_INTERVAL_SEC and (
-            self._reset_task is None or self._reset_task.done()
-        )
-        if due:
-            if self._mode == MODE_NORMAL:
-                # Silent firmware-freshness select-walk. Does NOT enter RECOVERY:
-                # the output keeps mirroring native presence. Only a real latch
-                # (presence stuck 'on') changes output semantics.
-                self._last_reset_anchor = now
-                reason = "health"
-            else:  # MODE_RECOVERY
-                # The radar firmware did not recover from the previous reset cycle
-                # (native still stuck on). Retry on the same cadence as the health
-                # interval. The controller's rate-limiter (3/30min + 30min block)
-                # caps runaway retries for a permanently broken radar.
-                self._last_reset_anchor = now
-                reason = "recovery-retry"
-            _LOGGER.info(
-                "sanitized_presence: %s select-walk (background, reason=%s)",
-                self._device_id,
-                reason,
-            )
-            self._reset_task = self.hass.async_create_task(self._controller.request_reset(reason))
-        self._recompute(now=now)
-
-    @callback
     def _on_fallback_tick(self, _now) -> None:
         if self._fallback_task is None or self._fallback_task.done():
             self._fallback_task = self.hass.async_create_task(
                 self._controller.maybe_recover_parked()
             )
-        # Also re-evaluate the state machine each fallback tick (60s cadence)
-        # so latch detection on a stuck device that produces no state events
-        # is not bottlenecked at the 30-min health interval.
+        # Re-evaluate the state machine each tick so a stuck radar emitting no
+        # state events still crosses the discrepancy threshold (and backoff
+        # expiry re-enters heal) within PARK_FALLBACK_INTERVAL_SEC.
         self._recompute(now=time.time())
 
-    def _read(self, eid: str) -> float | None:
-        s = self.hass.states.get(eid)
-        return _to_float(s.state if s else None)
+    # --- core decision -------------------------------------------------------
 
     @callback
     def _recompute(self, now: float) -> None:
-        """Single decision point: latch tracking, latch eval, mode transitions, output.
-
-        During a reset cycle (controller.is_resetting=True) the radar emits
-        phantom presence echoes. To suppress them:
-          - _presence_on_since is NOT advanced/reset (frozen tracking)
-          - In NORMAL mode, _attr_is_on is NOT recomputed (frozen output)
-        BUT the latch check still runs against the frozen _presence_on_since
-        so a genuinely stuck native presence is caught at the next tick — the
-        eager task factory in HA means is_resetting becomes True synchronously
-        when request_reset is scheduled, so without this the latch can never
-        fire on a stuck device with no state events.
-        """
+        """Single decision point: discrepancy tracking, trigger, output."""
         presence_st = self.hass.states.get(self._presence_eid)
         presence = presence_st.state if presence_st is not None else None
         self._presence_state = presence
         presence_on = presence == "on"
-        is_resetting = self._controller.is_resetting
 
-        # Latch tracking — frozen during reset to prevent phantom echo accumulation.
-        if not is_resetting:
-            if presence_on:
-                if self._presence_on_since is None:
-                    self._presence_on_since = now
-            else:
-                self._presence_on_since = None
+        if self._state == STATE_HEALING:
+            # Output frozen; the controller drives the toggles. Only refresh
+            # diagnostics (phantom presence/distance must not leak out).
+            self._notify_status()
+            self._write_state()
+            return
 
-        # Mode transitions — latch check runs even during a reset.
-        if self._mode == MODE_NORMAL:
-            held = (
-                self._presence_on_since is not None
-                and (now - self._presence_on_since) >= RECOVERY_PRESENCE_ON_SEC
-            )
-            if held:
-                self._enter_recovery("latch", now)
-        else:  # MODE_RECOVERY
-            # Exit only on a real 'off' that is not an echo of our own cycle.
-            if (not is_resetting) and presence == "off":
-                self._exit_recovery(now)
+        # Track the discrepancy: presence=on AND distance out of range.
+        discrepant = presence_on and not self._read_in_range()
+        if discrepant:
+            if self._discrepancy_since is None:
+                self._discrepancy_since = now
+        else:
+            self._discrepancy_since = None
 
-        # Output — frozen in NORMAL during reset (phantom echo suppression).
-        if self._mode == MODE_NORMAL:
-            if not is_resetting:
-                self._attr_is_on = presence_on
-            # else: keep previous _attr_is_on (freeze)
-        else:  # MODE_RECOVERY
-            self._attr_is_on = self._compute_output(presence_on)
+        if self._state == STATE_BACKOFF and now >= self._backoff_until:
+            self._state = STATE_NORMAL
 
+        held = (
+            self._discrepancy_since is not None
+            and (now - self._discrepancy_since) >= DISCREPANCY_TRIGGER_SEC
+        )
+        if held and now >= self._backoff_until and self._state != STATE_HEALING:
+            self._enter_heal(now)
+            return
+
+        # NORMAL / BACKOFF both mirror presence.
+        self._attr_is_on = presence_on
         self._notify_status()
+        self._write_state()
+
+    def _enter_heal(self, now: float) -> None:
+        self._state = STATE_HEALING
+        _LOGGER.info(
+            "sanitized_presence: %s entering HEALING (discrepancy %ds)",
+            self._device_id,
+            int(now - (self._discrepancy_since or now)),
+        )
+        # Output is left frozen at its current value (presence was 'on').
+        self._notify_status()
+        self._write_state()
+        if self._heal_task is None or self._heal_task.done():
+            self._heal_task = self.hass.async_create_task(self._run_heal())
+
+    async def _run_heal(self) -> None:
+        result = await self._controller.async_heal()
+        self._apply_heal_result(result, now=time.time())
+
+    def _apply_heal_result(self, result: str, now: float) -> None:
+        self._last_heal_result = result
+        if result == "occupied":
+            self._attr_is_on = True
+            self._state = STATE_NORMAL
+            self._discrepancy_since = None
+        elif result == "empty":
+            self._attr_is_on = False
+            self._state = STATE_NORMAL
+            self._discrepancy_since = None
+        else:  # gave_up
+            self._backoff_until = now + HEAL_BACKOFF_SEC
+            self._state = STATE_BACKOFF
+        _LOGGER.info(
+            "sanitized_presence: %s heal -> %s (state=%s)",
+            self._device_id,
+            result,
+            self._state,
+        )
+        self._notify_status()
+        self._write_state()
+
+    def _write_state(self) -> None:
         if getattr(self, "entity_id", None) is not None:
             self.async_write_ha_state()
-
-    def _compute_output(self, presence_on: bool) -> bool:
-        if self._mode == MODE_NORMAL:
-            return presence_on
-        target = self._read(self._target_distance_eid)
-        detect = self._read(self._detection_range_eid)
-        if target is None or detect is None:
-            return False
-        shield = self._read(self._shield_range_eid) or 0.0
-        return in_range(target, shield, detect, SHIELD_FLOOR_M)
-
-    def _enter_recovery(self, reason: str, now: float) -> None:
-        if self._mode == MODE_RECOVERY:
-            return
-        self._mode = MODE_RECOVERY
-        self._last_reset_anchor = now
-        _LOGGER.info(
-            "sanitized_presence: %s entering RECOVERY (reason=%s)", self._device_id, reason
-        )
-        if self._reset_task is None or self._reset_task.done():
-            self._reset_task = self.hass.async_create_task(self._controller.request_reset(reason))
-
-    def _exit_recovery(self, now: float) -> None:
-        self._mode = MODE_NORMAL
-        self._last_reset_anchor = now
-        _LOGGER.info("sanitized_presence: %s leaving RECOVERY (real presence=off)", self._device_id)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -285,7 +290,7 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
             "device_id": self._device_id,
-            "mode": self._mode,
+            "state": self._state,
             "presence_eid": self._presence_eid,
             "presence_state": self._presence_state,
             "target_distance_eid": self._target_distance_eid,
