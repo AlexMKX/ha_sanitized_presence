@@ -35,18 +35,11 @@ HEALTH_RESET_INTERVAL_SEC = 1800
 
 # Select-walk order driven on every reset cycle. Casing matches the option
 # labels exposed by Z2M exactly and must not be normalized.
-SENSOR_RESET_SEQUENCE = ("off", "unoccupied", "on")
+SENSOR_RESET_SEQUENCE = ("off", "on")
 
-# Hold the first "off" this long so the radar firmware fully de-energizes.
-RADAR_RESTART_DELAY = 30
-
-# Per-phase debounce between consecutive select_option calls in the reset
-# cycle. The original pyscript used 0.5s (the empirical minimum for the
-# Tuya MCU to accept each transition), but live observation showed
-# edge-of-mesh radars still dropped intermediate phases and parked the
-# select in 'unoccupied'. Bumped to 30s — matches RADAR_RESTART_DELAY so
-# the full cycle pauses uniformly between every transition.
-SENSOR_PHASE_DELAY_SEC = 30
+# Uniform inter-step delay between consecutive select_option calls in the
+# reset cycle: off -> 1s -> on.
+SENSOR_PHASE_DELAY_SEC = 1
 
 # Safety rails.
 RESET_COOLDOWN_SEC = 120
@@ -77,7 +70,6 @@ __all__ = [
     "RECOVERY_PRESENCE_ON_SEC",
     "HEALTH_RESET_INTERVAL_SEC",
     "SENSOR_RESET_SEQUENCE",
-    "RADAR_RESTART_DELAY",
     "SENSOR_PHASE_DELAY_SEC",
     "RESET_COOLDOWN_SEC",
     "RESET_RATE_WINDOW_SEC",

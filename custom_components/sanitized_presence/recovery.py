@@ -19,7 +19,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
-    RADAR_RESTART_DELAY,
     RESET_COOLDOWN_SEC,
     RESET_RATE_BLOCK_SEC,
     RESET_RATE_LIMIT,
@@ -109,13 +108,12 @@ class RecoveryController:
         return True
 
     async def async_reset(self, reason: str) -> None:
-        """Walk the select through SENSOR_RESET_SEQUENCE with phase delays.
+        """Walk the select through SENSOR_RESET_SEQUENCE with uniform inter-step delay.
 
-        The first "off" is held for RADAR_RESTART_DELAY so the firmware
-        de-energizes; remaining phases wait SENSOR_PHASE_DELAY_SEC. Specific
-        service errors abort the cycle (the off-fallback is the net for a
-        select left parked in "off"); CancelledError propagates so removal
-        cancels cleanly.
+        Each option except the first is preceded by SENSOR_PHASE_DELAY_SEC so
+        the cycle is: set 'off', wait 1s, set 'on'. Specific service errors
+        abort the cycle (the off-fallback is the net for a select left parked
+        in "off"); CancelledError propagates so removal cancels cleanly.
 
         Sets the re-entrancy / echo-suppression gate so it is safe to call
         directly; request_reset may have already set it.
@@ -129,10 +127,9 @@ class RecoveryController:
                 reason,
                 list(SENSOR_RESET_SEQUENCE),
             )
-            await self._select_option(SENSOR_RESET_SEQUENCE[0])
-            await asyncio.sleep(RADAR_RESTART_DELAY)
-            for option in SENSOR_RESET_SEQUENCE[1:]:
-                await asyncio.sleep(SENSOR_PHASE_DELAY_SEC)
+            for idx, option in enumerate(SENSOR_RESET_SEQUENCE):
+                if idx > 0:
+                    await asyncio.sleep(SENSOR_PHASE_DELAY_SEC)
                 await self._select_option(option)
             self._record_reset(time.time())
             _LOGGER.info(

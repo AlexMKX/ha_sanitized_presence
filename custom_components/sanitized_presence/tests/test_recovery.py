@@ -24,6 +24,7 @@ from custom_components.sanitized_presence.const import (
     RESET_COOLDOWN_SEC,
     RESET_RATE_BLOCK_SEC,
     RESET_RATE_LIMIT,
+    SENSOR_PHASE_DELAY_SEC,
     SENSOR_RESET_SEQUENCE,
 )
 from custom_components.sanitized_presence.recovery import RecoveryController
@@ -102,25 +103,26 @@ class TestResetCycle:
     """request_reset drives the select through SENSOR_RESET_SEQUENCE."""
 
     @pytest.mark.asyncio
-    async def test_reset_walks_sequence_in_order(self, monkeypatch):
-        """A reset calls select.select_option for each phase in order.
+    async def test_reset_cycle_drives_off_then_on(self, monkeypatch):
+        """A reset calls select.select_option exactly twice: 'off' then 'on'.
 
         Validates: the firmware-recovery contract — the select is walked
-        off -> unoccupied -> on. The order IS the contract, so exact call
-        order is asserted intentionally.
+        off -> on (2-step, no intermediate 'unoccupied'). The order IS the
+        contract, so exact call order and sleep timing are asserted.
         Code: custom_components/sanitized_presence/recovery.py::RecoveryController.async_reset
-        Assertion: hass.services.async_call invoked once per sequence
-            option, in SENSOR_RESET_SEQUENCE order, on the sensor eid.
+        Assertion: select_option called twice in order ['off', 'on'], and
+            asyncio.sleep awaited exactly once with SENSOR_PHASE_DELAY_SEC (1s).
         Method:
-        1. Arrange: controller with a mock hass; patch asyncio.sleep.
+        1. Arrange: controller with a mock hass; patch asyncio.sleep to record calls.
         2. Act: await async_reset("test").
-        3. Assert: call options equal list(SENSOR_RESET_SEQUENCE).
+        3. Assert: call options == ['off', 'on']; sleep called once with SENSOR_PHASE_DELAY_SEC.
         """
+        sleep_args = []
 
-        async def _no_sleep(_):
-            return None
+        async def _record_sleep(delay):
+            sleep_args.append(delay)
 
-        monkeypatch.setattr(rec.asyncio, "sleep", _no_sleep)
+        monkeypatch.setattr(rec.asyncio, "sleep", _record_sleep)
 
         hass = MagicMock()
         calls = []
@@ -134,8 +136,10 @@ class TestResetCycle:
         await ctrl.async_reset("test")
 
         assert [c[2] for c in calls] == list(SENSOR_RESET_SEQUENCE)
+        assert list(SENSOR_RESET_SEQUENCE) == ["off", "on"]
         assert all(c[3] == "select.radar_sensor" for c in calls)
         assert all(c[0] == "select" and c[1] == "select_option" for c in calls)
+        assert sleep_args == [SENSOR_PHASE_DELAY_SEC]
 
     @pytest.mark.asyncio
     async def test_reset_blocked_by_cooldown_does_not_call_service(self, monkeypatch):
