@@ -35,24 +35,32 @@ class TestStatus:
         """set_status records the mode as value and diagnostics as attributes.
 
         Validates: the diagnostic surface a user inspects to see whether a
-        device is recovering and how the safety rails stand.
+        device is healing and what the current heal state is.
         Code: custom_components/sanitized_presence/sensor.py::StatusSensorEntity.set_status
-        Assertion: native_value == 'recovery'; attributes expose
-            cooldown_left and rate_window_count from the snapshot.
+        Assertion: native_value == 'healing'; attributes expose
+            healing, iteration, discrepancy_age_sec, last_heal_result,
+            and backoff_left_sec from the snapshot.
         Method:
         1. Arrange: build sensor.
-        2. Act: set_status('recovery', {diagnostics...}).
+        2. Act: set_status('healing', {diagnostics...}).
         3. Assert: value and attributes reflect the inputs.
         """
         sensor = _make_sensor(hass)
         sensor.set_status(
-            "recovery",
-            {"cooldown_left": 42, "rate_window_count": 2, "circuit_breaker_left": 0},
+            "healing",
+            {
+                "healing": True,
+                "iteration": 2,
+                "discrepancy_age_sec": 950,
+                "last_heal_result": "none",
+                "backoff_left_sec": 0,
+            },
         )
-        assert sensor.native_value == "recovery"
+        assert sensor.native_value == "healing"
         attrs = sensor.extra_state_attributes
-        assert attrs["cooldown_left"] == 42
-        assert attrs["rate_window_count"] == 2
+        assert attrs["healing"] is True
+        assert attrs["iteration"] == 2
+        assert attrs["discrepancy_age_sec"] == 950
 
     def test_unique_id_is_preserved_for_migration(self, hass):
         """unique_id keeps the legacy suffix so the registry entity is reused.
