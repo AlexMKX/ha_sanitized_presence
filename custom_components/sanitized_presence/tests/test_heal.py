@@ -114,3 +114,58 @@ class TestConfirmedToggle:
         ok = await ctrl._confirmed_toggle()
         assert ok is False
         assert ("off",) in calls and ("on",) in calls
+
+
+class TestObserve:
+    """Stop A (sustained in_range+present), Stop B (whole window empty)."""
+
+    @pytest.mark.asyncio
+    async def test_stop_a_sustained_occupied(self, monkeypatch):
+        """in_range+present sustained STOP_A_CONFIRM_SEC -> 'occupied'.
+
+        Code: heal.py::HealController._observe
+        """
+        _patch_clock(monkeypatch)
+        ctrl = _make_controller(present=True, in_range=True)
+        assert await ctrl._observe() == "occupied"
+
+    @pytest.mark.asyncio
+    async def test_stop_a_needs_sustain(self, monkeypatch):
+        """A single in_range sample shorter than STOP_A_CONFIRM_SEC is not Stop A.
+
+        Code: heal.py::HealController._observe
+        Method: in_range true only on the very first sample, then false; with
+        presence on but distance out of range the rest of the window -> not
+        occupied; presence stays on so not empty -> None (iterate).
+        """
+        _patch_clock(monkeypatch)
+        from custom_components.sanitized_presence.const import HEAL_POLL_SEC
+        flags = {"n": 0}
+
+        def in_range_now():
+            flags["n"] += 1
+            return flags["n"] <= 1  # in range only first sample
+
+        ctrl = _make_controller(present=True)
+        ctrl.bind_observers(presence_on=lambda: True, in_range_now=in_range_now)
+        assert await ctrl._observe() is None
+
+    @pytest.mark.asyncio
+    async def test_stop_b_whole_window_empty(self, monkeypatch):
+        """presence off for the entire window -> 'empty'.
+
+        Code: heal.py::HealController._observe
+        """
+        _patch_clock(monkeypatch)
+        ctrl = _make_controller(present=False, in_range=False)
+        assert await ctrl._observe() == "empty"
+
+    @pytest.mark.asyncio
+    async def test_observe_neither(self, monkeypatch):
+        """presence on but never in range -> None (needs another iteration).
+
+        Code: heal.py::HealController._observe
+        """
+        _patch_clock(monkeypatch)
+        ctrl = _make_controller(present=True, in_range=False)
+        assert await ctrl._observe() is None

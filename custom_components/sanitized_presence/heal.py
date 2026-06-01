@@ -112,3 +112,31 @@ class HealController:
                     HEAL_CMD_TIMEOUT_SEC,
                 )
         return all_ok
+
+    async def _observe(self) -> str | None:
+        """Watch presence/distance for one HEAL_OBSERVE_SEC window.
+
+        Returns:
+            "occupied" — in_range AND presence=on sustained STOP_A_CONFIRM_SEC.
+            "empty"    — presence=off for the entire window.
+            None       — neither resolved; caller should iterate.
+        """
+        start = time.monotonic()
+        a_since: float | None = None
+        ever_present = False
+        while time.monotonic() - start < HEAL_OBSERVE_SEC:
+            present = bool(self._presence_on())
+            in_range = bool(self._in_range_now())
+            if present:
+                ever_present = True
+            if present and in_range:
+                if a_since is None:
+                    a_since = time.monotonic()
+                elif time.monotonic() - a_since >= STOP_A_CONFIRM_SEC:
+                    return "occupied"
+            else:
+                a_since = None
+            await asyncio.sleep(HEAL_POLL_SEC)
+        if not ever_present:
+            return "empty"
+        return None
