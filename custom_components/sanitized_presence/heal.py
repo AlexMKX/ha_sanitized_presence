@@ -140,3 +140,51 @@ class HealController:
         if not ever_present:
             return "empty"
         return None
+
+    async def async_heal(self) -> str:
+        """Run confirmed toggle + observe, iterating until resolved or capped.
+
+        Returns "occupied", "empty", or "gave_up". Sets the is_healing gate
+        for the whole run. CancelledError propagates so entity removal
+        cancels cleanly; specific service errors end the run as "gave_up".
+        """
+        self._healing = True
+        self._iteration = 0
+        try:
+            for i in range(1, HEAL_MAX_ITERATIONS + 1):
+                self._iteration = i
+                _LOGGER.info(
+                    "sanitized_presence: %s heal iteration %d/%d",
+                    self._device_name,
+                    i,
+                    HEAL_MAX_ITERATIONS,
+                )
+                await self._confirmed_toggle()
+                result = await self._observe()
+                if result is not None:
+                    _LOGGER.info(
+                        "sanitized_presence: %s heal resolved: %s (iteration %d)",
+                        self._device_name,
+                        result,
+                        i,
+                    )
+                    return result
+            _LOGGER.warning(
+                "sanitized_presence: %s heal gave up after %d iterations",
+                self._device_name,
+                HEAL_MAX_ITERATIONS,
+            )
+            return "gave_up"
+        except asyncio.CancelledError:  # pylint: disable=try-except-raise
+            raise
+        except (HomeAssistantError, vol.Invalid) as err:
+            _LOGGER.error(
+                "sanitized_presence: %s heal aborted (eid=%s): %s",
+                self._device_name,
+                self._sensor_eid,
+                err,
+            )
+            return "gave_up"
+        finally:
+            self._healing = False
+            self._iteration = 0

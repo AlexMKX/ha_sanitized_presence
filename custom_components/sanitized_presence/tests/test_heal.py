@@ -169,3 +169,54 @@ class TestObserve:
         _patch_clock(monkeypatch)
         ctrl = _make_controller(present=True, in_range=False)
         assert await ctrl._observe() is None
+
+
+class TestAsyncHeal:
+    """The bounded iterate-until-resolved loop."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_occupied_first_iteration(self, monkeypatch):
+        """Stop A on the first observe -> 'occupied'; one toggle.
+
+        Code: heal.py::HealController.async_heal
+        """
+        _patch_clock(monkeypatch)
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("off")  # toggle won't confirm; irrelevant
+        hass.services.async_call = _record_async_call([])
+        ctrl = _make_controller(hass, present=True, in_range=True)
+        result = await ctrl.async_heal()
+        assert result == "occupied"
+        assert ctrl.is_healing is False
+
+    @pytest.mark.asyncio
+    async def test_resolves_empty(self, monkeypatch):
+        """Whole window empty -> 'empty'.
+
+        Code: heal.py::HealController.async_heal
+        """
+        _patch_clock(monkeypatch)
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("on")
+        hass.services.async_call = _record_async_call([])
+        ctrl = _make_controller(hass, present=False, in_range=False)
+        assert await ctrl.async_heal() == "empty"
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_max_iterations(self, monkeypatch):
+        """Never resolving -> 'gave_up' after HEAL_MAX_ITERATIONS toggles.
+
+        Code: heal.py::HealController.async_heal
+        """
+        _patch_clock(monkeypatch)
+        from custom_components.sanitized_presence.const import HEAL_MAX_ITERATIONS
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("on")
+        toggles = []
+        hass.services.async_call = _record_async_call(toggles)
+        ctrl = _make_controller(hass, present=True, in_range=False)  # neither A nor B
+        result = await ctrl.async_heal()
+        assert result == "gave_up"
+        # each iteration toggles off+on => 2 calls per iteration
+        assert len(toggles) == HEAL_MAX_ITERATIONS * 2
+        assert ctrl.is_healing is False
