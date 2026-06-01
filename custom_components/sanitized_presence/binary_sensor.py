@@ -35,13 +35,16 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 
 from .const import (
     DOMAIN,
-    HEALTH_RESET_INTERVAL_SEC,
-    OFF_FALLBACK_INTERVAL_SEC,
-    RECOVERY_PRESENCE_ON_SEC,
     SHIELD_FLOOR_M,
 )
 from .helpers import _to_float, in_range
-from .recovery import RecoveryController
+
+# TODO(task7): Replace with HealController constants when binary_sensor is rewritten.
+HEALTH_RESET_INTERVAL_SEC = 1800
+OFF_FALLBACK_INTERVAL_SEC = 60
+RECOVERY_PRESENCE_ON_SEC = 900
+
+RecoveryController = object  # placeholder until Task 8
 
 _LOGGER = logging.getLogger(__name__)
 

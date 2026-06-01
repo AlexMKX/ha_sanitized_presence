@@ -25,7 +25,11 @@ from .const import (
     SUFFIX_TARGET_DISTANCE,
     TARGET_MODELS,
 )
-from .recovery import RecoveryController
+# TODO(task8): Replace with HealController import when discovery is updated.
+try:
+    from .recovery import RecoveryController
+except ImportError:
+    RecoveryController = object  # type: ignore[misc,assignment]
 from .sensor import StatusSensorEntity
 
 _LOGGER = logging.getLogger(__name__)

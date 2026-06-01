@@ -18,14 +18,15 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import (
-    RESET_COOLDOWN_SEC,
-    RESET_RATE_BLOCK_SEC,
-    RESET_RATE_LIMIT,
-    RESET_RATE_WINDOW_SEC,
-    SENSOR_PHASE_DELAY_SEC,
-    SENSOR_RESET_SEQUENCE,
-)
+# TODO(task8): These constants were removed in Task 1; recovery.py is
+# scheduled for deletion in Task 8. Provide stubs so the package loads.
+from .const import SENSOR_RESET_SEQUENCE
+
+RESET_COOLDOWN_SEC = 60
+RESET_RATE_BLOCK_SEC = 1800
+RESET_RATE_LIMIT = 3
+RESET_RATE_WINDOW_SEC = 1800
+SENSOR_PHASE_DELAY_SEC = 1
 
 _LOGGER = logging.getLogger(__name__)
 
