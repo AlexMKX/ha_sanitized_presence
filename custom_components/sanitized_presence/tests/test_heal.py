@@ -10,13 +10,17 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 import custom_components.sanitized_presence.heal as heal_mod
+from custom_components.sanitized_presence.const import HEAL_MAX_ITERATIONS
 from custom_components.sanitized_presence.heal import HealController
 
 
 def _record_async_call(calls):
-    async def _call(domain, service, data, blocking=False):
+    async def _call(domain, service, data, blocking=False):  # pylint: disable=unused-argument
         calls.append((data["option"],))
+
     return _call
 
 
@@ -29,30 +33,6 @@ def _make_controller(hass=None, present=True, in_range=True):
     )
     ctrl.bind_observers(presence_on=lambda: present, in_range_now=lambda: in_range)
     return ctrl
-
-
-class TestSkeleton:
-    """Construction, gate and diagnostics."""
-
-    def test_not_healing_initially(self):
-        """A fresh controller is not healing.
-
-        Code: heal.py::HealController.is_healing
-        """
-        ctrl = _make_controller()
-        assert ctrl.is_healing is False
-
-    def test_diagnostics_fields(self):
-        """diagnostics() exposes healing and iteration.
-
-        Code: heal.py::HealController.diagnostics
-        """
-        ctrl = _make_controller()
-        d = ctrl.diagnostics()
-        assert d == {"healing": False, "iteration": 0}
-
-
-import pytest
 
 
 def _patch_clock(monkeypatch):
@@ -74,6 +54,27 @@ def _select_state(value):
     s = MagicMock()
     s.state = value
     return s
+
+
+class TestSkeleton:
+    """Construction, gate and diagnostics."""
+
+    def test_not_healing_initially(self):
+        """A fresh controller is not healing.
+
+        Code: heal.py::HealController.is_healing
+        """
+        ctrl = _make_controller()
+        assert ctrl.is_healing is False
+
+    def test_diagnostics_fields(self):
+        """diagnostics() exposes healing and iteration.
+
+        Code: heal.py::HealController.diagnostics
+        """
+        ctrl = _make_controller()
+        d = ctrl.diagnostics()
+        assert d == {"healing": False, "iteration": 0}
 
 
 class TestConfirmedToggle:
@@ -139,7 +140,6 @@ class TestObserve:
         occupied; presence stays on so not empty -> None (iterate).
         """
         _patch_clock(monkeypatch)
-        from custom_components.sanitized_presence.const import HEAL_POLL_SEC
         flags = {"n": 0}
 
         def in_range_now():
@@ -209,7 +209,6 @@ class TestAsyncHeal:
         Code: heal.py::HealController.async_heal
         """
         _patch_clock(monkeypatch)
-        from custom_components.sanitized_presence.const import HEAL_MAX_ITERATIONS
         hass = MagicMock()
         hass.states.get = lambda eid: _select_state("on")
         toggles = []
@@ -251,7 +250,7 @@ class TestParkFallback:
         hass.services.async_call = _record_async_call(calls)
         ctrl = _make_controller(hass)
         await ctrl.maybe_recover_parked()
-        assert calls == []
+        assert not calls
 
     @pytest.mark.asyncio
     async def test_ignores_unavailable(self):
@@ -265,7 +264,7 @@ class TestParkFallback:
         hass.services.async_call = _record_async_call(calls)
         ctrl = _make_controller(hass)
         await ctrl.maybe_recover_parked()
-        assert calls == []
+        assert not calls
 
     @pytest.mark.asyncio
     async def test_guarded_while_healing(self):
@@ -280,4 +279,4 @@ class TestParkFallback:
         ctrl = _make_controller(hass)
         ctrl._healing = True
         await ctrl.maybe_recover_parked()
-        assert calls == []
+        assert not calls
