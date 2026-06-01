@@ -27,6 +27,11 @@ def _state(value):
 
 def _make_sensor(hass=None, controller=None):
     hass = hass or MagicMock()
+    # Close any coroutine passed to async_create_task so the GC does not emit
+    # "coroutine '_run_heal' was never awaited" RuntimeWarnings in tests that
+    # trigger _enter_heal.  MagicMock is preserved so assert_called /
+    # assert_not_called assertions remain functional.
+    hass.async_create_task = MagicMock(side_effect=lambda coro: coro.close())
     controller = controller or MagicMock()
     controller.is_healing = False
     controller.diagnostics = MagicMock(return_value={"healing": False, "iteration": 0})
@@ -178,6 +183,22 @@ class TestApplyHealResult:
         s = _make_sensor()
         s._state = STATE_HEALING
         s._apply_heal_result("gave_up", now=100.0)
+        assert s._state == STATE_BACKOFF
+        assert s._backoff_until > 100.0
+
+    def test_gave_up_mirrors_presence(self):
+        """Heal result 'gave_up' -> output re-mirrors native presence immediately.
+
+        Design spec: 'Iter cap -> output = mirror'.
+        Arrange: presence=on (frozen output was False during heal).
+        Code: binary_sensor.py::SanitizedPresenceBinarySensor._apply_heal_result
+        """
+        s = _make_sensor()
+        _set_states(s.hass, presence="on")
+        s._state = STATE_HEALING
+        s._attr_is_on = False  # frozen value during heal
+        s._apply_heal_result("gave_up", now=100.0)
+        assert s._attr_is_on is True
         assert s._state == STATE_BACKOFF
         assert s._backoff_until > 100.0
 

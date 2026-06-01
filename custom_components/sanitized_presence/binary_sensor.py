@@ -267,6 +267,7 @@ class SanitizedPresenceBinarySensor(BinarySensorEntity):
             self._state = STATE_NORMAL
             self._discrepancy_since = None
         else:  # gave_up
+            self._attr_is_on = self._read_presence_on()
             self._backoff_until = now + HEAL_BACKOFF_SEC
             self._state = STATE_BACKOFF
         _LOGGER.info(

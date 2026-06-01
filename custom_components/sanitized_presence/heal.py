@@ -200,6 +200,9 @@ class HealController:
         if self._healing:
             return
         st = self.hass.states.get(self._sensor_eid)
+        # Any non-'on' value (including 'unoccupied') is treated as parked /
+        # interrupted cycle: the select only cycles through ('off', 'on') in
+        # normal operation and 'unoccupied' is not a legitimate steady state.
         if st is None or st.state in ("on", *_IGNORED_SELECT):
             return
         _LOGGER.info(
