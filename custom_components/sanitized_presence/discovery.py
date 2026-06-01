@@ -25,11 +25,7 @@ from .const import (
     SUFFIX_TARGET_DISTANCE,
     TARGET_MODELS,
 )
-# TODO(task8): Replace with HealController import when discovery is updated.
-try:
-    from .recovery import RecoveryController
-except ImportError:
-    RecoveryController = object  # type: ignore[misc,assignment]
+from .heal import HealController
 from .sensor import StatusSensorEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -180,7 +176,7 @@ class SanitizedPresenceManager:
             if device.id in self._sensors:
                 continue
             eids = device.eids
-            controller = RecoveryController(
+            controller = HealController(
                 hass=self.hass,
                 device_id=device.id,
                 device_name=device.name,
