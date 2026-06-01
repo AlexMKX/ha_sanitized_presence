@@ -220,3 +220,64 @@ class TestAsyncHeal:
         # each iteration toggles off+on => 2 calls per iteration
         assert len(toggles) == HEAL_MAX_ITERATIONS * 2
         assert ctrl.is_healing is False
+
+
+class TestParkFallback:
+    """Restore a select parked at a non-'on' value when not healing."""
+
+    @pytest.mark.asyncio
+    async def test_restores_parked_off(self):
+        """select parked 'off', not healing -> sends 'on'.
+
+        Code: heal.py::HealController.maybe_recover_parked
+        """
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("off")
+        calls = []
+        hass.services.async_call = _record_async_call(calls)
+        ctrl = _make_controller(hass)
+        await ctrl.maybe_recover_parked()
+        assert calls == [("on",)]
+
+    @pytest.mark.asyncio
+    async def test_noop_when_on(self):
+        """select already 'on' -> no service call.
+
+        Code: heal.py::HealController.maybe_recover_parked
+        """
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("on")
+        calls = []
+        hass.services.async_call = _record_async_call(calls)
+        ctrl = _make_controller(hass)
+        await ctrl.maybe_recover_parked()
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_ignores_unavailable(self):
+        """select 'unavailable' -> no service call.
+
+        Code: heal.py::HealController.maybe_recover_parked
+        """
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("unavailable")
+        calls = []
+        hass.services.async_call = _record_async_call(calls)
+        ctrl = _make_controller(hass)
+        await ctrl.maybe_recover_parked()
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_guarded_while_healing(self):
+        """No park action while a heal run is in flight.
+
+        Code: heal.py::HealController.maybe_recover_parked
+        """
+        hass = MagicMock()
+        hass.states.get = lambda eid: _select_state("off")
+        calls = []
+        hass.services.async_call = _record_async_call(calls)
+        ctrl = _make_controller(hass)
+        ctrl._healing = True
+        await ctrl.maybe_recover_parked()
+        assert calls == []

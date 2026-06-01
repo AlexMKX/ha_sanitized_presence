@@ -188,3 +188,23 @@ class HealController:
         finally:
             self._healing = False
             self._iteration = 0
+
+    async def maybe_recover_parked(self) -> None:
+        """Restore a select parked at any non-'on' value to 'on'.
+
+        A select parked at 'off'/'unoccupied' with no heal running means a
+        heal toggle was interrupted (e.g. HA restart). Ignores
+        'unknown'/'unavailable' so an offline device is not whipsawed, and
+        is guarded so it never fights an in-flight heal toggle.
+        """
+        if self._healing:
+            return
+        st = self.hass.states.get(self._sensor_eid)
+        if st is None or st.state in ("on", *_IGNORED_SELECT):
+            return
+        _LOGGER.info(
+            "sanitized_presence: %s park-fallback — select parked %r, restoring 'on'",
+            self._device_name,
+            st.state,
+        )
+        await self._select_option("on")
