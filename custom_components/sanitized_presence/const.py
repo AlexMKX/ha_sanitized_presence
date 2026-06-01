@@ -25,31 +25,39 @@ SUFFIX_PRESENCE = "presence"  # Z2M DP key; HA device_class is "occupancy"
 # Range evaluation
 SHIELD_FLOOR_M = 0.1  # effective minimum even when shield_range=0
 
-# --- Recovery state machine ---
+# --- Discrepancy-driven heal ---
 
-# Enter recovery after presence has been continuously "on" this long.
-RECOVERY_PRESENCE_ON_SEC = 900  # 15 min
+# Enter heal when presence has been "on" while distance is out of range for
+# this long (continuous). A still person may briefly show distance=0, but
+# not for this duration; a stuck radar holds the discrepancy indefinitely.
+DISCREPANCY_TRIGGER_SEC = 900
 
-# Proactive periodic reset cadence (since last reset / since startup).
-HEALTH_RESET_INTERVAL_SEC = 1800
+# Observation window after each toggle: how long we watch presence/distance
+# for a stop condition before toggling again.
+HEAL_OBSERVE_SEC = 60
 
-# Select-walk order driven on every reset cycle. Casing matches the option
-# labels exposed by Z2M exactly and must not be normalized.
+# Consecutive iterations (toggle + observe) before giving up and backing off.
+HEAL_MAX_ITERATIONS = 5
+
+# Pause after giving up before heal may re-enter.
+HEAL_BACKOFF_SEC = 1800
+
+# Wait this long for the select to confirm 'off' / 'on' (Z2M optimistic=off).
+# A timeout means the cluster write did not reach the radar.
+HEAL_CMD_TIMEOUT_SEC = 10
+
+# Stop A requires in_range AND presence=on sustained this long (debounce
+# against a single-sample fluctuation).
+STOP_A_CONFIRM_SEC = 5
+
+# Internal poll cadence for confirm/observe loops.
+HEAL_POLL_SEC = 0.5
+
+# Park-fallback: restore a select parked at any non-'on' value to 'on'.
+PARK_FALLBACK_INTERVAL_SEC = 60
+
+# Select-walk: simple off->on toggle (no intermediate 'unoccupied').
 SENSOR_RESET_SEQUENCE = ("off", "on")
-
-# Uniform inter-step delay between consecutive select_option calls in the
-# reset cycle: off -> 1s -> on.
-SENSOR_PHASE_DELAY_SEC = 1
-
-# Safety rails.
-RESET_COOLDOWN_SEC = 120
-RESET_RATE_WINDOW_SEC = 1800
-RESET_RATE_LIMIT = 3
-RESET_RATE_BLOCK_SEC = 1800
-
-# Off-fallback poll cadence: a completed cycle ends in "on", so a select
-# parked in "off" indicates an interrupted cycle to recover.
-OFF_FALLBACK_INTERVAL_SEC = 60
 
 # Z2M select (operating mode) unique_id suffix.
 SUFFIX_SENSOR = "sensor"
@@ -67,14 +75,14 @@ __all__ = [
     "SUFFIX_SHIELD_RANGE",
     "SUFFIX_PRESENCE",
     "SHIELD_FLOOR_M",
-    "RECOVERY_PRESENCE_ON_SEC",
-    "HEALTH_RESET_INTERVAL_SEC",
+    "DISCREPANCY_TRIGGER_SEC",
+    "HEAL_OBSERVE_SEC",
+    "HEAL_MAX_ITERATIONS",
+    "HEAL_BACKOFF_SEC",
+    "HEAL_CMD_TIMEOUT_SEC",
+    "STOP_A_CONFIRM_SEC",
+    "HEAL_POLL_SEC",
+    "PARK_FALLBACK_INTERVAL_SEC",
     "SENSOR_RESET_SEQUENCE",
-    "SENSOR_PHASE_DELAY_SEC",
-    "RESET_COOLDOWN_SEC",
-    "RESET_RATE_WINDOW_SEC",
-    "RESET_RATE_LIMIT",
-    "RESET_RATE_BLOCK_SEC",
-    "OFF_FALLBACK_INTERVAL_SEC",
     "SUFFIX_SENSOR",
 ]
